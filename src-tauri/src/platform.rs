@@ -123,6 +123,7 @@ pub fn load_config(app: &tauri::AppHandle) -> Result<Config, String> {
 
 pub fn save_config(app: &tauri::AppHandle, config: Config) -> Result<(), String> {
     config.validate()?;
+    config.bonjour_hostnames()?;
     let path = config_path(app)?;
     let directory = path.parent().ok_or("配置目录无效")?;
     fs::create_dir_all(directory).map_err(|e| e.to_string())?;
@@ -310,6 +311,7 @@ clear_proxy_bypass() {{
 
 pub fn install_service(app: &tauri::AppHandle, config: Config) -> Result<(), String> {
     config.validate()?;
+    config.bonjour_hostnames()?;
     if interfaces()?
         .iter()
         .any(|network| network.ip == config.upstream_dns)

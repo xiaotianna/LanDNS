@@ -105,7 +105,9 @@ async fn serve(config: Config) -> Result<(), String> {
             drop(stop.take());
             for task in tasks.drain(..) {
                 task.abort();
-                let _ = task.await;
+                if let Ok(Err(error)) = task.await {
+                    log("error", &error);
+                }
             }
             status.running = false;
             active.clear();
@@ -232,6 +234,9 @@ async fn start_listeners(
         sockets.push((udp, tcp, http));
     }
     let mut tasks = Vec::new();
+    if let Some(task) = crate::mdns::register(&config.bonjour_hostnames()?, network).await? {
+        tasks.push(task);
+    }
     for (udp, tcp, http) in sockets {
         tasks.push(tokio::spawn(udp_server(udp, context.clone())));
         tasks.push(tokio::spawn(tcp_server(tcp, context.clone(), false)));

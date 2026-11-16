@@ -78,6 +78,29 @@ pub fn valid_dns_name(value: &str) -> bool {
 }
 
 impl Config {
+    pub fn bonjour_hostnames(&self) -> Result<Vec<String>, String> {
+        let local_suffix = self.domain == "local" || self.domain.ends_with(".local");
+        let mut names = Vec::new();
+        if self.domain.ends_with(".local") {
+            names.push(self.domain.clone());
+        }
+        for route in self.routes.iter().filter(|route| route.enabled) {
+            if route.subdomain == "*" {
+                if local_suffix {
+                    return Err(".local 使用 Bonjour，不能使用通配项目。请填写具体项目域名，或将默认后缀改为 dev.home.arpa。".into());
+                }
+                continue;
+            }
+            let hostname = route.effective_hostname(&self.domain);
+            if hostname.ends_with(".local") {
+                names.push(hostname);
+            }
+        }
+        names.sort();
+        names.dedup();
+        Ok(names)
+    }
+
     pub fn resolves_hostname(&self, name: &str) -> bool {
         name == self.domain
             || name.ends_with(&format!(".{}", self.domain))
@@ -232,6 +255,27 @@ pub struct DiagnosticResult {
 #[cfg(test)]
 mod checks {
     use super::*;
+
+    #[test]
+    fn selects_enabled_bonjour_names_and_preserves_legacy_config_loading() {
+        let mut config = Config::default();
+        config.routes = serde_json::from_value(serde_json::json!([
+            {"id":"one","name":"One","subdomain":"sub-sso","hostname":"sub-sso.local","port":3002,"enabled":true},
+            {"id":"two","name":"Two","subdomain":"disabled","hostname":"disabled.local","port":3002,"enabled":false},
+            {"id":"three","name":"Three","subdomain":"app","port":3002,"enabled":true}
+        ])).unwrap();
+        assert_eq!(config.bonjour_hostnames().unwrap(), ["sub-sso.local"]);
+        config.domain = "dev.local".into();
+        assert_eq!(
+            config.bonjour_hostnames().unwrap(),
+            ["app.dev.local", "dev.local", "sub-sso.local"]
+        );
+        config.routes[2].subdomain = "*".into();
+        assert!(config.validate().is_ok());
+        assert!(config.bonjour_hostnames().is_err());
+        config.domain = "dev.home.arpa".into();
+        assert_eq!(config.bonjour_hostnames().unwrap(), ["sub-sso.local"]);
+    }
 
     #[test]
     fn reads_service_status_without_version() {

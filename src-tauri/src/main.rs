@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod engine;
+mod mdns;
 mod model;
 mod platform;
 mod proxy_bypass;
@@ -75,37 +76,65 @@ async fn uninstall_service(state: tauri::State<'_, Operations>) -> Result<(), St
 
 #[tauri::command]
 async fn diagnose(app: tauri::AppHandle, hostname: String) -> Result<DiagnosticResult, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    let start = Instant::now();
+    let query_name = hostname.clone();
+    let (expected_ip, answer) = tauri::async_runtime::spawn_blocking(move || {
         let config = platform::load_config(&app)?;
-        if !model::valid_dns_name(&hostname) || !config.resolves_hostname(&hostname) {
+        if !model::valid_dns_name(&query_name) || !config.resolves_hostname(&query_name) {
             return Err("请输入已配置的项目域名或默认网址后缀下的主机名。".into());
         }
         let expected_ip = platform::detect_network(&config).ok().map(|n| n.ip);
-        let start = Instant::now();
-        let answer = query_local_dns(&hostname);
-        let (resolved_ip, message) = match answer {
-            Ok(ip) => (Some(ip), String::new()),
-            Err(error) => (None, error),
-        };
-        let ok = expected_ip.is_some() && resolved_ip == expected_ip;
-        let message = if ok {
-            "本机 DNS 返回了当前局域网地址。请在另一台设备上访问域名以验证网络接入。".into()
-        } else if message.is_empty() {
-            "DNS 返回地址与当前网络不一致，请检查服务状态后重试。".into()
-        } else {
-            format!("DNS 查询失败：{message}。请确认服务已启动且 53 端口未被占用。")
-        };
-        Ok(DiagnosticResult {
-            hostname,
-            expected_ip,
-            resolved_ip,
-            elapsed_ms: start.elapsed().as_millis() as u64,
-            ok,
-            message,
-        })
+        Ok::<_, String>((expected_ip, query_local_dns(&query_name)))
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())??;
+    let (mut resolved_ip, mut message) = match answer {
+        Ok(ip) => (Some(ip), String::new()),
+        Err(error) => (
+            None,
+            format!("DNS 查询失败：{error}。请确认服务已启动且 53 端口未被占用。"),
+        ),
+    };
+    let mut ok = false;
+    if expected_ip.is_some() && resolved_ip == expected_ip {
+        let system = tokio::time::timeout(
+            Duration::from_secs(5),
+            tokio::net::lookup_host((hostname.as_str(), 80)),
+        )
+        .await;
+        resolved_ip = match system {
+            Ok(Ok(addresses)) => {
+                let addresses: Vec<_> = addresses
+                    .filter(|address| address.is_ipv4())
+                    .map(|address| address.ip().to_string())
+                    .collect();
+                addresses
+                    .iter()
+                    .find(|ip| Some(*ip) == expected_ip.as_ref())
+                    .cloned()
+                    .or_else(|| addresses.into_iter().next())
+            }
+            _ => None,
+        };
+        ok = resolved_ip == expected_ip;
+        message = if ok {
+            "本机 DNS 和系统解析均正常。请打开网址验证项目，并在另一台设备上确认网络接入。".into()
+        } else if hostname.ends_with(".local") {
+            "DNS 服务应答正常，但系统未正确解析 .local 域名。请检查 Bonjour 注册日志和本地网络访问权限。".into()
+        } else {
+            "DNS 服务应答正常，但系统解析失败或地址不一致。请检查系统 DNS 设置后重试。".into()
+        };
+    } else if message.is_empty() {
+        message = "DNS 返回地址与当前网络不一致，请检查服务状态后重试。".into();
+    }
+    Ok(DiagnosticResult {
+        hostname,
+        expected_ip,
+        resolved_ip,
+        elapsed_ms: start.elapsed().as_millis() as u64,
+        ok,
+        message,
+    })
 }
 
 fn query_local_dns(hostname: &str) -> Result<String, String> {
