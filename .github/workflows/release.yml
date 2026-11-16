@@ -1,0 +1,83 @@
+name: Release macOS
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  macos:
+    name: macOS Universal
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Check release version
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import tomllib
+          from pathlib import Path
+
+          tag = os.environ['GITHUB_REF_NAME']
+          if not re.fullmatch(r'v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)', tag):
+              raise SystemExit('Release tags must use vMAJOR.MINOR.PATCH, for example v0.1.0.')
+          version = tag[1:]
+          for path in ('package.json', 'package-lock.json', 'src-tauri/tauri.conf.json'):
+              data = json.loads(Path(path).read_text())
+              if data['version'] != version:
+                  raise SystemExit(f'{path}: expected {version}, found {data["version"]}')
+              if path == 'package-lock.json' and data['packages']['']['version'] != version:
+                  raise SystemExit(f'{path}: root package must use version {version}.')
+          cargo = tomllib.loads(Path('src-tauri/Cargo.toml').read_text())
+          if cargo['package']['version'] != version:
+              raise SystemExit(f'src-tauri/Cargo.toml must use version {version}.')
+          lock = tomllib.loads(Path('src-tauri/Cargo.lock').read_text())
+          package = next(item for item in lock['package'] if item['name'] == cargo['package']['name'] and 'source' not in item)
+          if package['version'] != version:
+              raise SystemExit(f'src-tauri/Cargo.lock must use version {version}.')
+          print(f'Releasing LanDNS {version}')
+          PY
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build and publish installers
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # shortcut: Ad-hoc signing is not notarized; add Developer ID signing for verified distribution.
+          APPLE_SIGNING_IDENTITY: '-'
+        with:
+          tauriScript: npm run tauri
+          args: --target universal-apple-darwin --bundles app,dmg -- --locked
+          tagName: ${{ github.ref_name }}
+          releaseName: LanDNS ${{ github.ref_name }}
+          releaseBody: |
+            macOS 14 或更新版本，适用于 Apple Silicon 和 Intel Mac。
+            下载 .dmg，打开后将 LanDNS 拖入「应用程序」。
+
+            当前安装包使用临时签名，尚未经过 Apple 公证。首次打开可能需要在「系统设置 → 隐私与安全性」中确认允许。
+          releaseDraft: false
+          prerelease: false
+          uploadUpdaterJson: false

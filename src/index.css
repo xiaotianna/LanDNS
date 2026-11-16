@@ -1,0 +1,31 @@
+@import '@fontsource/figtree/400.css';
+@import '@fontsource/figtree/500.css';
+@import '@fontsource/figtree/600.css';
+@import '@fontsource/figtree/700.css';
+@import '@astryxdesign/core/reset.css';
+@import '@astryxdesign/core/astryx.css';
+@import '@astryxdesign/theme-neutral/theme.css';
+
+.astryx-collapsible-trigger {
+  width: calc(100% + var(--spacing-2) * 2);
+  margin-inline: calc(-1 * var(--spacing-2));
+  padding: var(--spacing-2);
+  border-radius: var(--radius-element);
+}
+
+/* shortcut: Astryx exposes no top-center position; use its toast rows until it does. */
+[data-toast-id] {
+  align-self: center;
+}
+
+.astryx-toast:has([data-toast-status='success']) {
+  background-color: var(--color-success);
+  color: var(--color-on-success);
+  --color-text-primary: var(--color-on-success);
+}
+
+.astryx-toast:has([data-toast-status='loading']) {
+  background-color: var(--color-info);
+  color: var(--color-on-info);
+  --color-text-primary: var(--color-on-info);
+}
