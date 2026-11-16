@@ -359,7 +359,7 @@ fn local_reply(request: &Message, config: &Config, ip: Ipv4Addr) -> Option<Messa
         .to_utf8()
         .trim_end_matches('.')
         .to_ascii_lowercase();
-    if name == config.domain || name.ends_with(&format!(".{}", config.domain)) {
+    if config.resolves_hostname(&name) {
         let mut response = base_reply(request, ResponseCode::NoError);
         response.set_authoritative(true);
         if query.query_type() == RecordType::A {
@@ -456,15 +456,13 @@ async fn forward_dns(
 
 fn route_port(host: &str, config: &Config) -> Option<u16> {
     let name = host.trim_end_matches('.').to_ascii_lowercase();
-    let subdomain = name.strip_suffix(&format!(".{}", config.domain))?;
-    if subdomain.is_empty() {
-        return None;
-    }
     config
         .routes
         .iter()
-        .find(|r| r.enabled && r.subdomain == subdomain)
+        .find(|r| r.enabled && r.subdomain != "*" && r.effective_hostname(&config.domain) == name)
         .or_else(|| {
+            name.strip_suffix(&format!(".{}", config.domain))
+                .filter(|subdomain| !subdomain.is_empty())?;
             config
                 .routes
                 .iter()
@@ -707,6 +705,7 @@ mod checks {
                 id: "fallback".into(),
                 name: "Fallback".into(),
                 subdomain: "*".into(),
+                hostname: None,
                 port: 3000,
                 enabled: true,
             },
@@ -714,13 +713,33 @@ mod checks {
                 id: "api".into(),
                 name: "API".into(),
                 subdomain: "api".into(),
+                hostname: None,
                 port: 8080,
+                enabled: true,
+            },
+            ProxyRoute {
+                id: "custom".into(),
+                name: "Custom".into(),
+                subdomain: "app".into(),
+                hostname: Some("example.com".into()),
+                port: 8081,
                 enabled: true,
             },
         ];
         assert_eq!(route_port("API.dev.home.arpa.", &config), Some(8080));
         assert_eq!(route_port("nested.api.dev.home.arpa", &config), Some(3000));
         assert_eq!(route_port("api.notdev.home.arpa", &config), None);
+        assert_eq!(route_port("dev.home.arpa", &config), None);
+        assert_eq!(route_port("EXAMPLE.COM.", &config), Some(8081));
+        for host in ["com", "sub.example.com", "otherexample.com"] {
+            assert_eq!(route_port(host, &config), None, "{host}");
+        }
+        config.routes[2].hostname = Some("custom.dev.home.arpa".into());
+        assert_eq!(route_port("custom.dev.home.arpa", &config), Some(8081));
+        assert_eq!(route_port("child.custom.dev.home.arpa", &config), Some(3000));
+        config.routes[2].hostname = Some("dev.home.arpa".into());
+        assert_eq!(route_port("dev.home.arpa", &config), Some(8081));
+        config.routes[2].enabled = false;
         assert_eq!(route_port("dev.home.arpa", &config), None);
         config.routes[1].enabled = false;
         assert_eq!(route_port("api.dev.home.arpa", &config), Some(3000));
@@ -742,20 +761,39 @@ mod checks {
 
     #[test]
     fn local_dns_preserves_zone_boundaries_and_never_leaks_home_arpa() {
-        let config = Config::default();
+        let mut config = Config::default();
+        config.routes.push(ProxyRoute {
+            id: "custom".into(),
+            name: "Custom".into(),
+            subdomain: "app".into(),
+            hostname: Some("example.com".into()),
+            port: 8080,
+            enabled: true,
+        });
         let ip = Ipv4Addr::new(192, 168, 1, 42);
         for (name, kind, expected) in [
             ("a.dev.home.arpa.", RecordType::A, Some(1)),
             ("nested.a.dev.home.arpa.", RecordType::A, Some(1)),
             ("dev.home.arpa.", RecordType::AAAA, Some(0)),
             ("notdev.home.arpa.", RecordType::A, Some(0)),
-            ("example.com.", RecordType::A, None),
+            ("EXAMPLE.COM.", RecordType::A, Some(1)),
+            ("example.com.", RecordType::AAAA, Some(0)),
+            ("com.", RecordType::A, None),
+            ("sub.example.com.", RecordType::A, None),
+            ("otherexample.com.", RecordType::A, None),
         ] {
             let mut query = Message::new();
             query.add_query(Query::query(Name::from_ascii(name).unwrap(), kind));
             let response = local_reply(&query, &config, ip);
             assert_eq!(response.map(|r| r.answers().len()), expected);
         }
+        config.routes[0].enabled = false;
+        let mut query = Message::new();
+        query.add_query(Query::query(
+            Name::from_ascii("example.com.").unwrap(),
+            RecordType::A,
+        ));
+        assert!(local_reply(&query, &config, ip).is_none());
         assert!(allowed(
             "192.168.1.8".parse().unwrap(),
             ip,

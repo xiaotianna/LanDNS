@@ -2,6 +2,7 @@ export interface ProxyRoute {
   id: string;
   name: string;
   subdomain: string;
+  hostname?: string | null;
   port: number;
   enabled: boolean;
 }

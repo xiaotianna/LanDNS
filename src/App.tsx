@@ -16,7 +16,7 @@ import { getVersion } from '@tauri-apps/api/app'
 import { check, type Update } from '@tauri-apps/plugin-updater'
 import { api, isDesktop } from './api'
 import { DEFAULT_CONFIG, type Config, type DiagnosticResult, type ProxyRoute, type Snapshot } from './types'
-import { getProjectUrl, parseLocalAddress } from './lib/projects'
+import { getProjectUrl, parseLocalAddress, parseProjectAddress } from './lib/projects'
 
 type Page = 'overview' | 'proxy' | 'devices' | 'logs' | 'settings'
 const pages = [
@@ -53,8 +53,10 @@ export default function App({ themeMode, onThemeChange }: { themeMode: ThemeMode
   const [hostname, setHostname] = useState(DEFAULT_CONFIG.domain)
   const [routeEditor, setRouteEditor] = useState<ProxyRoute | null>(null)
   const [localAddress, setLocalAddress] = useState('')
+  const [projectAddress, setProjectAddress] = useState('')
+  const projectAddressEdited = useRef(false)
   const [selectedProjectId, setSelectedProjectId] = useState('')
-  const [routeError, setRouteError] = useState<{ field: 'subdomain' | 'address' | 'name'; message: string } | null>(null)
+  const [routeError, setRouteError] = useState<{ field: 'url' | 'address' | 'name'; message: string } | null>(null)
   const [filter, setFilter] = useState('')
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [settingsError, setSettingsError] = useState<{ field: 'domain' | 'upstream' | 'ttl'; message: string } | null>(null)
@@ -232,24 +234,30 @@ export default function App({ themeMode, onThemeChange }: { themeMode: ThemeMode
     setSettingsError(null)
     setRouteEditor(route ? { ...route } : { id: crypto.randomUUID(), name: '', subdomain: '', port: 3000, enabled: true })
     setLocalAddress(route ? `http://localhost:${route.port}` : '')
+    setProjectAddress(route ? route.subdomain === '*' && !route.hostname ? '*' : getProjectUrl(route, config) : '')
+    projectAddressEdited.current = false
     setRouteError(null)
   }
   const submitRoute = (event: FormEvent) => {
     event.preventDefault()
     if (!routeEditor || locked || !isDesktop || !loaded || connectionError) return
-    const reject = (field: 'subdomain' | 'address' | 'name', message: string) => {
+    const reject = (field: 'url' | 'address' | 'name', message: string) => {
       setRouteError({ field, message })
-      document.getElementById(`route-${field === 'subdomain' ? 'domain' : field}`)?.focus()
+      document.getElementById(`route-${field}`)?.focus()
     }
     const target = parseLocalAddress(localAddress)
     if ('error' in target) { reject('address', target.error); return }
     if (!validateSettings()) return
-    const candidate = { ...routeEditor, name: routeEditor.name.trim(), subdomain: routeEditor.subdomain.trim().toLowerCase(), port: target.port, enabled: true }
-    if (candidate.subdomain.length > 120 || (candidate.subdomain !== '*' && (candidate.subdomain.length + config.domain.length + 1 > 253 || !candidate.subdomain.split('.').every(label => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))))) {
-      reject('subdomain', '请填写一个访问名称，例如 sub，只使用英文字母、数字或连字符。'); return
+    const address = parseProjectAddress(projectAddress, config.domain)
+    if ('error' in address) { reject('url', address.error); return }
+    const candidate = { ...routeEditor, ...address, name: routeEditor.name.trim(), port: target.port, enabled: true }
+    if (!projectAddressEdited.current && !routeEditor.hostname && address.hostname === `${routeEditor.subdomain}.${config.domain}`) {
+      candidate.hostname = null
+      candidate.subdomain = routeEditor.subdomain
     }
-    if (config.routes.some(route => route.id !== candidate.id && route.subdomain === candidate.subdomain)) {
-      reject('subdomain', '这个访问名称已被其他项目使用，请换一个名称。'); return
+    const candidateHost = candidate.hostname ?? `${candidate.subdomain}.${config.domain}`
+    if (config.routes.some(route => route.id !== candidate.id && (route.hostname ?? `${route.subdomain}.${config.domain}`) === candidateHost)) {
+      reject('url', '这个访问网址已被其他项目使用，请换一个域名。'); return
     }
     if (candidate.name.length > 80) { reject('name', '项目备注最多 80 个字符。'); return }
     if (!candidate.name) candidate.name = candidate.subdomain === '*' ? '默认项目' : candidate.subdomain.slice(0, 80)
@@ -265,7 +273,7 @@ export default function App({ themeMode, onThemeChange }: { themeMode: ThemeMode
     }, '已启用，可点击「打开网址」访问。')
   }
   const updateRoute = (id: string, enabled: boolean) => change({ proxyEnabled: enabled || config.proxyEnabled, routes: config.routes.map(route => route.id === id ? { ...route, enabled } : route) })
-  const filteredRoutes = config.routes.filter(route => `${route.name} ${route.subdomain} ${route.port}`.toLowerCase().includes(filter.toLowerCase()))
+  const filteredRoutes = config.routes.filter(route => `${route.name} ${getProjectUrl(route, config)} ${route.port}`.toLowerCase().includes(filter.toLowerCase()))
   const enabledRoutes = currentConfig.routes.filter(route => route.enabled).length
   const activeDomain = currentConfig.domain
   const project = currentConfig.routes.find(route => route.id === selectedProjectId)
@@ -273,9 +281,6 @@ export default function App({ themeMode, onThemeChange }: { themeMode: ThemeMode
     ?? currentConfig.routes.find(route => route.enabled)
     ?? currentConfig.routes[0]
   const projectUrl = project ? getProjectUrl(project, currentConfig) : ''
-  const editorUrl = routeEditor?.subdomain.trim()
-    ? getProjectUrl({ ...routeEditor, subdomain: routeEditor.subdomain.trim().toLowerCase() }, { ...config, routes: config.routes.filter(route => route.id !== routeEditor.id) })
-    : `http://你的名称.${config.domain}`
   const projectEnabled = Boolean(running && currentConfig.proxyEnabled && project?.enabled)
   const enableProject = () => {
     if (!validateSettings()) return
@@ -345,7 +350,7 @@ export default function App({ themeMode, onThemeChange }: { themeMode: ThemeMode
 
             {page === 'proxy' && <Stack gap={6}>
               {!currentConfig.proxyEnabled && currentConfig.routes.length > 0 && <Banner status="info" title="项目网址尚未启用。" endContent={<Button label="启用项目访问" isDisabled={!isDesktop || !loaded || locked || dirty || Boolean(connectionError)} onClick={() => { void enableProject() }} />} />}
-              {config.routes.length === 0 ? <EmptyState icon={<Icon icon={Laptop} />} title="还没有项目" description="填写本地网址和访问名称即可添加。" /> : <Stack gap={4}>
+              {config.routes.length === 0 ? <EmptyState icon={<Icon icon={Laptop} />} title="还没有项目" description="填写本地网址和访问网址即可添加。" /> : <Stack gap={4}>
                 <TextInput label="搜索项目" isLabelHidden type="search" startIcon={Search} placeholder="搜索项目或网址…" value={filter} onChange={setFilter} />
                 <Table aria-label="本地项目">
                   <TableHeader><TableRow><TableHeaderCell scope="col">项目</TableHeaderCell><TableHeaderCell scope="col">访问网址</TableHeaderCell><TableHeaderCell scope="col">本地网址</TableHeaderCell><TableHeaderCell scope="col">共享</TableHeaderCell><TableHeaderCell scope="col">操作</TableHeaderCell></TableRow></TableHeader>
@@ -390,7 +395,7 @@ export default function App({ themeMode, onThemeChange }: { themeMode: ThemeMode
               </Stack>
               <Collapsible trigger="还是打不开？" defaultIsOpen={false}><Stack gap={3}>
                 <Text>先确认 Mac 上的 localhost 网址可以打开，再在概览中点击「打开网址」。</Text>
-                <Text>浏览器显示 502 时，在代理软件绕过列表中加入 {currentConfig.domain} 和 *.{currentConfig.domain}。</Text>
+                <Text>浏览器显示 502 时，在代理软件绕过列表中加入 {project?.hostname || `${currentConfig.domain} 和 *.${currentConfig.domain}`}。</Text>
                 <Text>Mac 的 IP 变化后，域名会自动更新；其他设备填写的 DNS 地址也要同步更新。</Text>
                 <Text>允许 macOS 防火墙中的 LanDNS 入站连接。访客 Wi-Fi、设备隔离、VPN 或浏览器安全 DNS 可能影响接入。Mac 睡眠、关机或断网时，以它作为唯一 DNS 的设备也可能无法打开普通网站。</Text>
                 <Text>项目提示域名不被允许时，在项目的主机名白名单中加入该域名，例如 Vite 的 server.allowedHosts。</Text>
@@ -471,9 +476,8 @@ export default function App({ themeMode, onThemeChange }: { themeMode: ThemeMode
             <FormLayout>
               {settingsError && <Banner status="error" title={settingsError.message} description="请关闭弹窗，在设置 → 高级设置中修改。" />}
               <TextInput id="route-address" htmlName="localAddress" label="本地网址 *" inputMode="url" hasAutoFocus isRequired hasAutoCorrect={false} autoCapitalize="none" hasSpellCheck={false} placeholder="http://localhost:3002" value={localAddress} isDisabled={locked} status={routeError?.field === 'address' ? { type: 'error', message: routeError.message } : undefined} onChange={value => { setRouteError(null); setLocalAddress(value) }} />
-              <TextInput id="route-domain" htmlName="subdomain" label="访问名称 *" isRequired hasAutoCorrect={false} autoCapitalize="none" hasSpellCheck={false} placeholder="例如 sub" value={routeEditor.subdomain} isDisabled={locked} status={routeError?.field === 'subdomain' ? { type: 'error', message: routeError.message } : undefined} onChange={value => { setRouteError(null); setRouteEditor({ ...routeEditor, subdomain: value }) }} />
+              <TextInput id="route-url" htmlName="projectAddress" label="访问网址 *" description={`填写完整网址可单独设置域名；只填 sub 则使用 sub.${config.domain}。`} inputMode="url" isRequired hasAutoCorrect={false} autoCapitalize="none" hasSpellCheck={false} placeholder="http://sub.dev.test" value={projectAddress} isDisabled={locked} status={routeError?.field === 'url' ? { type: 'error', message: routeError.message } : undefined} onChange={value => { setRouteError(null); projectAddressEdited.current = true; setProjectAddress(value) }} />
               <TextInput id="route-name" htmlName="name" label="项目备注" placeholder="例如：我的网站" value={routeEditor.name} isDisabled={locked} status={routeError?.field === 'name' ? { type: 'error', message: routeError.message } : undefined} onChange={value => { setRouteError(null); setRouteEditor({ ...routeEditor, name: value }) }} />
-              <TextInput label="访问网址" value={editorUrl} isReadOnly />
             </FormLayout>
           </form>
         </LayoutContent>}

@@ -345,17 +345,34 @@ pub fn install_service(app: &tauri::AppHandle, config: Config) -> Result<(), Str
         directory = xml_escape(SERVICE_DIR)
     );
     fs::write(&staged_plist, plist).map_err(|e| e.to_string())?;
+    let mut resolver_domains = vec![config.domain.as_str()];
+    for route in config.routes.iter().filter(|route| route.enabled) {
+        if let Some(hostname) = route.hostname.as_deref() {
+            if hostname != config.domain && !hostname.ends_with(&format!(".{}", config.domain)) {
+                resolver_domains.push(hostname);
+            }
+        }
+    }
+    resolver_domains.sort_unstable();
+    resolver_domains.dedup();
+    let resolver_domains = resolver_domains
+        .into_iter()
+        .map(shell_quote)
+        .collect::<Vec<_>>()
+        .join(" ");
     let script = format!(
         r#"{preamble}
 source_executable={source_executable}
 source_config={source_config}
 source_plist={source_plist}
-domain={domain}
-resolver="/etc/resolver/$domain"
-[ ! -L "$resolver" ] || fail "已有同名 DNS resolver 是符号链接，未作修改"
-if [ -e "$resolver" ] && [ "$(/usr/bin/head -n 1 "$resolver")" != "$marker" ]; then
-  fail "已有 $domain 的 DNS resolver 配置，未覆盖，请先处理冲突"
-fi
+set -- {resolver_domains}
+for domain in "$@"; do
+  resolver="/etc/resolver/$domain"
+  [ ! -L "$resolver" ] || fail "已有 $domain 的 DNS resolver 是符号链接，未作修改"
+  if [ -e "$resolver" ] && [ "$(/usr/bin/head -n 1 "$resolver")" != "$marker" ]; then
+    fail "已有 $domain 的 DNS resolver 配置，未覆盖，请先处理冲突"
+  fi
+done
 work=$(/usr/bin/mktemp -d '/Library/Application Support/.dns-x-install.XXXXXXXX')
 /bin/chmod 700 "$work"
 swapped=0
@@ -420,10 +437,16 @@ if [ "$ready" != 1 ]; then
 fi
 /bin/mkdir -p /etc/resolver
 printf '%s\nnameserver 127.0.0.1\nport 53\n' "$marker" > "$work/resolver"
-/usr/bin/install -o root -g wheel -m 644 "$work/resolver" "$resolver"
+for domain in "$@"; do
+  /usr/bin/install -o root -g wheel -m 644 "$work/resolver" "/etc/resolver/$domain"
+done
 for old in /etc/resolver/*; do
-  [ "$old" != "$resolver" ] && [ -f "$old" ] && [ ! -L "$old" ] || continue
-  if [ "$(/usr/bin/head -n 1 "$old")" = "$marker" ]; then /bin/rm -f "$old"; fi
+  [ -f "$old" ] && [ ! -L "$old" ] || continue
+  keep=0
+  for domain in "$@"; do
+    [ "$old" != "/etc/resolver/$domain" ] || keep=1
+  done
+  if [ "$keep" = 0 ] && [ "$(/usr/bin/head -n 1 "$old")" = "$marker" ]; then /bin/rm -f "$old"; fi
 done
 committed=1
 "#,
@@ -431,7 +454,7 @@ committed=1
         source_executable = shell_quote(&staged_executable.to_string_lossy()),
         source_config = shell_quote(&staged_config.to_string_lossy()),
         source_plist = shell_quote(&staged_plist.to_string_lossy()),
-        domain = shell_quote(&config.domain)
+        resolver_domains = resolver_domains
     );
     administrator(&script)?;
     save_config(app, config).map_err(|e| format!("服务已启动，但本地配置保存失败：{e}"))

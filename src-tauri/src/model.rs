@@ -25,8 +25,18 @@ pub struct ProxyRoute {
     pub id: String,
     pub name: String,
     pub subdomain: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hostname: Option<String>,
     pub port: u16,
     pub enabled: bool,
+}
+
+impl ProxyRoute {
+    pub fn effective_hostname(&self, domain: &str) -> String {
+        self.hostname
+            .clone()
+            .unwrap_or_else(|| format!("{}.{}", self.subdomain, domain))
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -68,6 +78,15 @@ pub fn valid_dns_name(value: &str) -> bool {
 }
 
 impl Config {
+    pub fn resolves_hostname(&self, name: &str) -> bool {
+        name == self.domain
+            || name.ends_with(&format!(".{}", self.domain))
+            || self
+                .routes
+                .iter()
+                .any(|route| route.enabled && route.hostname.as_deref() == Some(name))
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         if !valid_dns_name(&self.domain)
             || url::Host::parse(&format!("project.{}", self.domain)).is_err()
@@ -126,12 +145,24 @@ impl Config {
             }
             if route.subdomain != "*"
                 && (!valid_dns_name(&route.subdomain)
-                    || route.subdomain.len() + self.domain.len() + 1 > 253)
+                    || (route.hostname.is_none()
+                        && route.subdomain.len() + self.domain.len() + 1 > 253))
             {
                 return Err("子域名格式无效。填写 app、api 或 *，无需填写完整域名。".into());
             }
-            if !names.insert(&route.subdomain) {
-                return Err("每个子域名只能有一条代理规则。".into());
+            if let Some(hostname) = &route.hostname {
+                if route.subdomain == "*"
+                    || !valid_dns_name(hostname)
+                    || !matches!(url::Host::parse(hostname), Ok(url::Host::Domain(_)))
+                {
+                    return Err(
+                        "访问域名格式无效。请填写域名而非 IP 或完整网址；默认项目不能设置独立域名。"
+                            .into(),
+                    );
+                }
+            }
+            if !names.insert(route.effective_hostname(&self.domain)) {
+                return Err("每个访问域名只能有一条代理规则。".into());
             }
             if route.port == 0 || route.port == 53 || route.port == 80 {
                 return Err(
@@ -219,6 +250,72 @@ mod checks {
     }
 
     #[test]
+    fn custom_hostnames_preserve_legacy_routes_and_validate_effective_names() {
+        let legacy: ProxyRoute = serde_json::from_str(
+            r#"{"id":"legacy","name":"App","subdomain":"app","port":3000,"enabled":true}"#,
+        )
+        .unwrap();
+        assert_eq!(legacy.hostname, None);
+        assert!(serde_json::to_value(&legacy)
+            .unwrap()
+            .get("hostname")
+            .is_none());
+        let mut config = Config::default();
+        let mut custom = legacy.clone();
+        custom.id = "custom".into();
+        custom.hostname = Some("example.com".into());
+        config.routes = vec![legacy, custom];
+        assert!(config.validate().is_ok());
+        assert_eq!(
+            config.routes[0].effective_hostname(&config.domain),
+            "app.dev.home.arpa"
+        );
+        assert_eq!(
+            config.routes[1].effective_hostname(&config.domain),
+            "example.com"
+        );
+        assert!(config.resolves_hostname("example.com"));
+        for name in ["com", "sub.example.com", "otherexample.com"] {
+            assert!(!config.resolves_hostname(name), "{name}");
+        }
+        config.routes[1].enabled = false;
+        assert!(!config.resolves_hostname("example.com"));
+        config.routes[1].enabled = true;
+        for name in [
+            "",
+            "127.0.0.1",
+            "2130706433",
+            "[::1]",
+            "http://example.com",
+            "example.com/path",
+            "example.com:80",
+            "Example.com",
+            "example.com.",
+            "app.dev.home.arpa",
+        ] {
+            config.routes[1].hostname = Some(name.into());
+            assert!(config.validate().is_err(), "{name}");
+        }
+        config.routes[1].hostname = Some("example.com".into());
+        config.routes[1].subdomain = "*".into();
+        assert!(config.validate().is_err());
+        config.routes[1].subdomain = [
+            "a".repeat(63),
+            "b".repeat(63),
+            "c".repeat(63),
+            "d".repeat(60),
+        ]
+        .join(".");
+        assert!(config.validate().is_ok());
+        config.routes[1].hostname = None;
+        assert!(config.validate().is_err());
+        for route in &mut config.routes {
+            route.subdomain = "*".into();
+        }
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
     fn rejects_unsafe_configuration() {
         let mut config = Config::default();
         assert!(config.validate().is_ok());
@@ -250,6 +347,7 @@ mod checks {
             id: "one".into(),
             name: "App".into(),
             subdomain: "*".into(),
+            hostname: None,
             port: 3000,
             enabled: true,
         });

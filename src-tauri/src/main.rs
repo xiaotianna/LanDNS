@@ -76,10 +76,8 @@ async fn uninstall_service(state: tauri::State<'_, Operations>) -> Result<(), St
 async fn diagnose(app: tauri::AppHandle, hostname: String) -> Result<DiagnosticResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let config = platform::load_config(&app)?;
-        if !model::valid_dns_name(&hostname)
-            || (hostname != config.domain && !hostname.ends_with(&format!(".{}", config.domain)))
-        {
-            return Err("请输入当前开发域名下的有效主机名。".into());
+        if !model::valid_dns_name(&hostname) || !config.resolves_hostname(&hostname) {
+            return Err("请输入已配置的项目域名或默认网址后缀下的主机名。".into());
         }
         let expected_ip = platform::detect_network(&config).ok().map(|n| n.ip);
         let start = Instant::now();
@@ -148,14 +146,14 @@ fn open_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
     let parsed = url::Url::parse(&url).map_err(|_| "地址格式无效。")?;
     let config = platform::load_config(&app)?;
     let host = parsed.host_str().unwrap_or_default();
-    let local = host == config.domain || host.ends_with(&format!(".{}", config.domain));
+    let local = config.resolves_hostname(host);
     let docs = ["support.apple.com", "v2.tauri.app"].contains(&host);
     if !parsed.username().is_empty()
         || parsed.password().is_some()
         || !(local && parsed.scheme() == "http" && parsed.port_or_known_default() == Some(80)
             || docs && parsed.scheme() == "https" && parsed.port_or_known_default() == Some(443))
     {
-        return Err("仅允许打开当前开发域名的 HTTP 页面或官方帮助页面。".into());
+        return Err("仅允许打开已配置项目域名的 HTTP 页面或官方帮助页面。".into());
     }
     let status = Command::new("/usr/bin/open")
         .arg(parsed.as_str())

@@ -23,7 +23,7 @@ Resolve arbitrary subdomains to the Mac's current LAN address, track address cha
 ## Capabilities and Constraints
 
 - Graphical configuration and start/stop controls; no per-domain hosts edits.
-- The main task is adding a local project by its existing localhost URL and choosing a readable access name. Saving a project enables the required DNS and HTTP forwarding service together.
+- The main task is adding a local project by its existing localhost URL and choosing its editable access URL. A full URL sets an independent hostname for that project; a short name uses the default suffix. Saving a project enables the required DNS and HTTP forwarding service together.
 - Keep the overview focused on adding local projects and opening their saved URLs. Manage project targets on the project page; put DNS diagnostics, network status, and network tuning in Settings → Advanced settings, collapsed by default. Keep UI copy short.
 - DNS clients must use this Mac as their DNS server or reach it through a configured router resolver.
 - DHCP reservations or router DNS updates are required to keep the DNS endpoint reachable after its IP changes.
