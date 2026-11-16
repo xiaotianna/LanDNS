@@ -69,9 +69,11 @@ pub fn valid_dns_name(value: &str) -> bool {
 
 impl Config {
     pub fn validate(&self) -> Result<(), String> {
-        if !valid_dns_name(&self.domain) || !self.domain.ends_with(".home.arpa") {
+        if !valid_dns_name(&self.domain)
+            || url::Host::parse(&format!("project.{}", self.domain)).is_err()
+        {
             return Err(
-                "开发域名须为 home.arpa 的子域，例如 dev.home.arpa，仅支持小写字母、数字和连字符。"
+                "网址后缀格式无效，例如 dev.test；每段仅支持小写字母、数字和连字符，不能以连字符开头或结尾。"
                     .into(),
             );
         }
@@ -153,6 +155,8 @@ pub struct NetworkInfo {
 #[serde(rename_all = "camelCase")]
 pub struct ServiceStatus {
     pub running: bool,
+    #[serde(default)]
+    pub version: Option<String>,
     pub pid: Option<u32>,
     pub ip: Option<String>,
     pub interface_name: Option<String>,
@@ -197,16 +201,43 @@ pub struct DiagnosticResult {
 #[cfg(test)]
 mod checks {
     use super::*;
+
+    #[test]
+    fn reads_service_status_without_version() {
+        let mut status: ServiceStatus = serde_json::from_str(
+            r#"{"running":true,"dnsQueries":7,"proxyRequests":3}"#,
+        )
+        .unwrap();
+        assert_eq!(status.version, None);
+        assert!(status.running);
+        assert_eq!(status.dns_queries, 7);
+        assert!(serde_json::to_value(&status).unwrap()["version"].is_null());
+        status.version = Some(env!("CARGO_PKG_VERSION").into());
+        let current: ServiceStatus =
+            serde_json::from_value(serde_json::to_value(&status).unwrap()).unwrap();
+        assert_eq!(current.version.as_deref(), Some(env!("CARGO_PKG_VERSION")));
+    }
+
     #[test]
     fn rejects_unsafe_configuration() {
         let mut config = Config::default();
         assert!(config.validate().is_ok());
+        for name in ["dev.home.arpa", "dev.test", "example.com", "lan", "123.test"] {
+            config.domain = name.into();
+            assert!(config.validate().is_ok(), "{name}");
+        }
         for name in [
-            "example.com",
+            "",
             "../dev.home.arpa",
             "-dev.home.arpa",
             "Dev.home.arpa",
             "dev..home.arpa",
+            "dev.test-",
+            "dev_test",
+            "dev.test/",
+            "dev.123",
+            "dev.0x7f",
+            "127.0.0.1",
         ] {
             config.domain = name.into();
             assert!(config.validate().is_err(), "{name}");

@@ -18,6 +18,7 @@ export interface Config {
 export interface NetworkInfo { interfaceName: string; ip: string; netmask: string }
 export interface ServiceStatus {
   running: boolean;
+  version: string | null;
   pid: number | null;
   ip: string | null;
   interfaceName: string | null;

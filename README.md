@@ -14,6 +14,7 @@
 - **后台持续运行**：关闭应用窗口后，共享服务仍继续工作；可在界面中启动、停止或卸载服务。
 - **状态与排查**：查看运行日志、网络地址和请求数量，使用 DNS 检测检查域名解析。
 - **主题设置**：支持浅色、深色和跟随系统，默认跟随系统，选择会自动保存。
+- **应用更新**：手动检查新版本，下载并校验更新包，安装后重启应用。
 
 LanDNS 自带 DNS 服务与 HTTP 代理，使用安装包不需要额外安装 dnsmasq、Caddy 或 Homebrew。
 
@@ -67,6 +68,8 @@ LanDNS 自带 DNS 服务与 HTTP 代理，使用安装包不需要额外安装 d
 
 LanDNS 负责把网址转发给项目，项目本身仍需保持运行。它不会代替你启动或管理开发服务器。
 
+网址后缀可以在「设置 → 高级设置」中自定义，例如改为 `dev.test` 后，项目 `sub` 的网址就是 `http://sub.dev.test`。默认使用 `dev.home.arpa`；自定义后缀会接管该域名及其子域名的本地解析，使用自己的域名时请选择专门用于开发的子域。开启系统代理时，也需要将所选后缀及 `*.后缀` 加入代理绕过列表。
+
 ### 让手机或其他电脑访问
 
 1. 让设备与 Mac 连接同一局域网。
@@ -84,10 +87,12 @@ LanDNS 负责把网址转发给项目，项目本身仍需保持运行。它不�
 
 - **关闭窗口**：后台服务继续运行。已启用的服务会由 macOS 管理，并在开机后启动。
 - **停止服务**：暂停项目访问，移除 LanDNS 的本机解析配置，并停用服务的开机运行，直到再次启动。
-- **更新应用**：替换应用后，停止并重新启动服务，让后台程序更新到新版本。
+- **更新应用**：在「设置 → 应用更新」点击「检查更新」，发现新版后点击「下载安装」。运行中的共享服务会同步更新，然后自动重启应用，macOS 可能请求管理员授权；项目列表与设置会保留。取消服务授权或手动替换应用后，设置页会提示「更新共享服务」，可继续完成同步。
 - **卸载服务**：在「设置」中点击「卸载服务」，移除后台程序与本机解析配置，保留项目列表。之后可以删除应用。
 
 安装、更新、停止和卸载后台服务时，macOS 可能要求管理员授权。卸载前，请恢复其他设备或路由器上为 LanDNS 修改的 DNS 设置。
+
+首次需要手动安装包含「应用更新」功能的版本，之后即可在应用内更新。更新来源为本项目的 [GitHub Releases](https://github.com/xiaotianna/LanDNS/releases)，安装前会验证更新包签名。
 
 ## 本地启动
 
@@ -141,10 +146,13 @@ cargo check --manifest-path src-tauri/Cargo.toml
 
 打包需要在 Mac 上进行，使用与本地启动相同的开发环境。Tauri 会自动构建前端，再生成应用和安装包。
 
+更新签名私钥存放在本机 `~/.tauri/landns-updater.key`，以下示例通过环境变量提供私钥路径。私钥必须与 `src-tauri/tauri.conf.json` 的 `plugins.updater.pubkey` 配对；若私钥设置了密码，还需提供 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`。请妥善备份私钥，并保持后续版本使用同一密钥，勿将私钥提交到仓库。
+
 ### 打包当前 Mac 的架构
 
 ```sh
 npm ci
+TAURI_SIGNING_PRIVATE_KEY="$HOME/.tauri/landns-updater.key" \
 APPLE_SIGNING_IDENTITY=- npm run tauri -- build --bundles app,dmg -- --locked
 ```
 
@@ -163,6 +171,7 @@ Apple Silicon Mac 默认生成 ARM64 版本，Intel Mac 默认生成 x86_64 版�
 
 ```sh
 rustup target add aarch64-apple-darwin x86_64-apple-darwin
+TAURI_SIGNING_PRIVATE_KEY="$HOME/.tauri/landns-updater.key" \
 APPLE_SIGNING_IDENTITY=- npm run tauri -- build --target universal-apple-darwin --bundles app,dmg -- --locked
 ```
 
@@ -177,9 +186,20 @@ src-tauri/target/universal-apple-darwin/release/bundle/dmg/
 
 ## 发布版本与自动构建
 
-项目包含 [发布工作流](.github/workflows/release.yml)。将项目放入 GitHub 仓库并启用 Actions 后，推送版本 tag 就会自动构建 macOS Universal 安装包，并创建已发布的 GitHub Release，上传构建产物。
+项目包含 [发布工作流](.github/workflows/release.yml)。配置更新签名后，推送版本 tag 就会自动构建 macOS Universal 安装包，并创建已发布的 GitHub Release，上传安装包、签名更新包和 `latest.json` 更新清单。
 
-### 1. 确认安装包版本
+### 1. 配置更新签名
+
+在 GitHub 仓库的 **Settings → Secrets and variables → Actions → Repository secrets** 中添加：
+
+- `TAURI_SIGNING_PRIVATE_KEY`：本机 `~/.tauri/landns-updater.key` 文件的完整内容，填写内容而非本机路径。
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`：私钥密码；未设置密码时可不添加。
+
+工作流会在缺少私钥时提前停止，并给出配置提示。更新包使用独立的 Tauri 签名进行来源校验，详见 [Tauri 更新签名说明](https://v2.tauri.app/plugin/updater/#signing-updates)。
+
+应用读取 `https://github.com/xiaotianna/LanDNS/releases/latest/download/latest.json`；如将项目发布到其他仓库，需要同步修改 `src-tauri/tauri.conf.json` 的 `plugins.updater.endpoints`。
+
+### 2. 确认安装包版本
 
 安装包版本取自 `src-tauri/tauri.conf.json`。需要升级应用版本时，将以下位置同步更新，例如 `0.1.0`：
 
@@ -191,9 +211,9 @@ src-tauri/target/universal-apple-darwin/release/bundle/dmg/
 
 内部 Rust 包名仍为 `dns-x`；更新版本时，只修改该包的条目，不要修改依赖包的版本。
 
-以 `v` 开头的 tag 会触发构建，Release 名称使用该 tag。
+以 `v` 开头的 tag 会触发构建，Release 名称使用该 tag。应用仅提示高于当前安装版本的更新，因此每次发布都应增加版本号。
 
-### 2. 推送 tag
+### 3. 推送 tag
 
 确认要发布的代码和工作流已提交，且远程仓库已配置为 `origin`，再手动执行：
 
@@ -204,11 +224,11 @@ git push origin v0.1.0
 
 创建本地 tag 本身不会触发构建，推送到 GitHub 后才会触发。后续版本使用新的版本号和 tag。
 
-### 3. 获取安装包
+### 4. 获取安装包
 
 在 GitHub 的 **Actions → Release macOS** 中查看构建进度。构建成功后，在 **Releases** 中找到对应版本，下载 Universal `.dmg`；一个安装包即可覆盖两种 Mac 架构。
 
-默认工作流使用 GitHub 提供的 `GITHUB_TOKEN` 创建 Release，无需配置个人访问令牌。仓库或组织策略需要允许工作流使用 `contents: write` 权限。当前配置不需要 Apple 签名 secrets，生成的安装包仍有上文所述的临时签名与未公证限制。
+默认工作流使用 GitHub 提供的 `GITHUB_TOKEN` 创建 Release，无需配置个人访问令牌。仓库或组织策略需要允许工作流使用 `contents: write` 权限。工作流需要上面配置的 Tauri 更新签名 secret；macOS 应用仍使用 ad-hoc 临时签名，尚未经过 Apple 公证。
 
 ## 常见问题
 

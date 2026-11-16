@@ -231,6 +231,7 @@ fn administrator(script: &str) -> Result<(), String> {
     let escaped = script.replace('\\', "\\\\").replace('"', "\\\"");
     let apple_script = format!("do shell script \"{escaped}\" with administrator privileges with prompt \"LanDNS 需要安装或管理本机 DNS 后台服务。\"\n");
     let mut child = Command::new("/usr/bin/osascript")
+        .current_dir("/")
         .arg("-")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

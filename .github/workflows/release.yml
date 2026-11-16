@@ -21,6 +21,15 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Check updater signing key
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::error::Configure the TAURI_SIGNING_PRIVATE_KEY repository secret with the updater private key contents before publishing."
+            exit 1
+          fi
+
       - uses: actions/setup-node@v7
         with:
           node-version: '24'
@@ -37,6 +46,8 @@ jobs:
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # shortcut: Ad-hoc signing is not notarized; add Developer ID signing for verified distribution.
           APPLE_SIGNING_IDENTITY: '-'
         with:
@@ -47,8 +58,9 @@ jobs:
           releaseBody: |
             macOS 14 或更新版本，适用于 Apple Silicon 和 Intel Mac。
             下载 .dmg，打开后将 LanDNS 拖入「应用程序」。
+            已安装支持应用更新的版本后，可在「设置 → 应用更新」中检查并安装新版。
 
             当前安装包使用临时签名，尚未经过 Apple 公证。首次打开可能需要在「系统设置 → 隐私与安全性」中确认允许。
           releaseDraft: false
           prerelease: false
-          uploadUpdaterJson: false
+          uploadUpdaterJson: true

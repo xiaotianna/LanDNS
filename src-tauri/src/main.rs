@@ -168,6 +168,29 @@ fn open_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
     }
 }
 
+#[tauri::command]
+async fn restart_app(app: tauri::AppHandle) {
+    app.restart();
+}
+
+#[tauri::command]
+fn updater_available() -> bool {
+    if cfg!(debug_assertions) {
+        return false;
+    }
+    let Ok(executable) = std::env::current_exe() else {
+        return false;
+    };
+    let Some(directory) = executable.parent() else {
+        return false;
+    };
+    directory.ends_with("Contents/MacOS")
+        && directory
+            .parent()
+            .and_then(std::path::Path::parent)
+            .is_some_and(|bundle| bundle.extension().is_some_and(|extension| extension == "app"))
+}
+
 fn main() {
     if std::env::args().nth(1).as_deref() == Some("--service") {
         if let Err(error) = engine::run() {
@@ -177,6 +200,12 @@ fn main() {
         return;
     }
     tauri::Builder::default()
+        .setup(|app| {
+            if updater_available() {
+                app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
+            }
+            Ok(())
+        })
         .manage(Operations::default())
         .invoke_handler(tauri::generate_handler![
             get_snapshot,
@@ -185,7 +214,9 @@ fn main() {
             stop_service,
             uninstall_service,
             diagnose,
-            open_url
+            open_url,
+            restart_app,
+            updater_available
         ])
         .run(tauri::generate_context!())
         .expect("无法启动 LanDNS 桌面应用");

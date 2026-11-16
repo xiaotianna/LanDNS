@@ -16,4 +16,6 @@ export const api = {
   uninstallService: () => call<void>('uninstall_service'),
   diagnose: (hostname: string) => call<DiagnosticResult>('diagnose', { hostname }),
   openUrl: (url: string) => call<void>('open_url', { url }),
+  restartApp: () => call<void>('restart_app'),
+  updaterAvailable: () => call<boolean>('updater_available'),
 };

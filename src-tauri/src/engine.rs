@@ -72,6 +72,7 @@ async fn serve(config: Config) -> Result<(), String> {
     let counters = Arc::new(Counters::default());
     let mut status = ServiceStatus {
         running: false,
+        version: Some(env!("CARGO_PKG_VERSION").into()),
         pid: Some(std::process::id()),
         ip: None,
         interface_name: None,

@@ -6,12 +6,14 @@ import {
 import {
   AlertDialog, AppShell, Badge, Banner, Button, ButtonGroup, Card, Collapsible, Dialog, DialogHeader,
   EmptyState, FormLayout, Heading, Icon, IconButton, Layout, LayoutContent, LayoutFooter,
-  LayoutHeader, MetadataList, MetadataListItem, NumberInput, Selector,
+  LayoutHeader, MetadataList, MetadataListItem, NumberInput, ProgressBar, Selector,
   SideNav, SideNavHeading, SideNavItem, SideNavSection, Spinner, Stack, Switch, Table,
   TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text, TextInput, useToast,
 } from '@astryxdesign/core'
 import type { ThemeMode } from '@astryxdesign/core/theme'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { getVersion } from '@tauri-apps/api/app'
+import { check, type Update } from '@tauri-apps/plugin-updater'
 import { api, isDesktop } from './api'
 import { DEFAULT_CONFIG, type Config, type DiagnosticResult, type ProxyRoute, type Snapshot } from './types'
 import { getProjectUrl, parseLocalAddress } from './lib/projects'
@@ -40,6 +42,14 @@ export default function App({ themeMode, onThemeChange }: { themeMode: ThemeMode
   const [connectionError, setConnectionError] = useState<string | null>(null)
   const [loaded, setLoaded] = useState(!isDesktop)
   const [diagnostic, setDiagnostic] = useState<DiagnosticResult | null>(null)
+  const [appVersion, setAppVersion] = useState('')
+  const [updaterAvailable, setUpdaterAvailable] = useState(false)
+  const [availableUpdate, setAvailableUpdate] = useState<Update | null>(null)
+  const [updateInstalled, setUpdateInstalled] = useState(false)
+  const [updateStatus, setUpdateStatus] = useState('')
+  const [updateError, setUpdateError] = useState<string | null>(null)
+  const [updateProgress, setUpdateProgress] = useState<number | null>(null)
+  const updateServicePending = useRef(false)
   const [hostname, setHostname] = useState(DEFAULT_CONFIG.domain)
   const [routeEditor, setRouteEditor] = useState<ProxyRoute | null>(null)
   const [localAddress, setLocalAddress] = useState('')
@@ -93,6 +103,14 @@ export default function App({ themeMode, onThemeChange }: { themeMode: ThemeMode
     return () => window.clearInterval(timer)
   }, [refresh])
 
+  useEffect(() => {
+    if (isDesktop) void Promise.all([getVersion(), api.updaterAvailable()]).then(([version, available]) => {
+      setAppVersion(version)
+      setUpdaterAvailable(available)
+    }).catch(error => setUpdateError(errorText(error)))
+  }, [])
+  useEffect(() => () => { void availableUpdate?.close().catch(() => {}) }, [availableUpdate])
+
   const change = (patch: Partial<Config>) => {
     setSettingsError(null)
     dirtyRef.current = true
@@ -112,10 +130,66 @@ export default function App({ themeMode, onThemeChange }: { themeMode: ThemeMode
     finally { setBusy(null) }
   }
   const saved = () => { dirtyRef.current = false; setDirty(false) }
+  const checkForUpdates = () => {
+    if (!updaterAvailable || updateInstalled) return
+    return action('正在检查更新', async () => {
+      setUpdateError(null)
+      setUpdateStatus('')
+      setAvailableUpdate(null)
+      try {
+        const update = await check({ timeout: 30000 })
+        setAvailableUpdate(update)
+        setUpdateStatus(update ? `发现新版本 ${update.version}` : '当前已是最新版本。')
+      } catch (error) {
+        setUpdateError(`检查更新失败：${errorText(error)}`)
+        throw error
+      }
+    })
+  }
+  const installUpdate = () => {
+    if (!updaterAvailable || !availableUpdate || dirty || !loaded || connectionError) return
+    return action('正在更新应用', async () => {
+      setUpdateError(null)
+      let installed = updateInstalled
+      try {
+        if (!installed) {
+          updateServicePending.current = serviceActive
+          setUpdateStatus('正在下载更新')
+          setUpdateProgress(null)
+          let downloaded = 0
+          let total = 0
+          await availableUpdate.downloadAndInstall(event => {
+            if (event.event === 'Started') total = event.data.contentLength ?? 0
+            else if (event.event === 'Progress') {
+              downloaded += event.data.chunkLength
+              if (total > 0) setUpdateProgress(Math.min(100, Math.floor(downloaded / total * 100)))
+            } else {
+              setUpdateStatus('正在校验并安装更新')
+              setUpdateProgress(null)
+            }
+          }, { timeout: 300000 })
+          installed = true
+          setUpdateInstalled(true)
+        }
+        if (updateServicePending.current) {
+          setUpdateStatus('正在更新共享服务，请完成 macOS 授权')
+          // macOS installs the new bundle at the same path; startService copies its new executable.
+          await api.startService(currentConfig)
+          updateServicePending.current = false
+        }
+        setUpdateStatus('更新已安装，正在重启应用')
+        await api.restartApp()
+      } catch (error) {
+        setUpdateStatus('')
+        setUpdateError(`${installed ? '新版应用已安装，请重试完成更新' : '更新失败，可重试'}：${errorText(error)}`)
+        throw error
+      }
+    })
+  }
   const validateSettings = () => {
     let error: { field: 'domain' | 'upstream' | 'ttl'; message: string } | null = null
-    if (config.domain.length > 253 || !/^([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+home\.arpa$/.test(config.domain)) {
-      error = { field: 'domain', message: '请填写以 .home.arpa 结尾的网址后缀，例如 dev.home.arpa。' }
+    if (config.domain.length > 253 || !config.domain.split('.').every(label => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label)) || !URL.canParse(`http://project.${config.domain}`)) {
+      error = { field: 'domain', message: '请填写有效的网址后缀，例如 dev.test；每段使用小写字母、数字或连字符，连字符不能放在首尾。' }
     } else if (!config.upstreamDns.trim()) {
       error = { field: 'upstream', message: '请填写 DNS 地址，例如 1.1.1.1。' }
     } else if (ttlEntryError.current || !Number.isInteger(config.ttl) || config.ttl < 5 || config.ttl > 300) {
@@ -332,6 +406,21 @@ export default function App({ themeMode, onThemeChange }: { themeMode: ThemeMode
               <FormLayout>
                 <Selector id="theme-mode" label="主题" value={themeMode} onChange={changeTheme} options={[{ value: 'system', label: '跟随系统' }, { value: 'light', label: '浅色' }, { value: 'dark', label: '深色' }]} />
               </FormLayout>
+              <Stack gap={3}>
+                <Heading level={2}>应用更新</Heading>
+                <Text>当前版本：{appVersion ? `v${appVersion}` : isDesktop ? '读取中…' : '桌面应用中可用'}</Text>
+                {isDesktop && appVersion && !updaterAvailable && <Text>请使用正式打包的 LanDNS 应用检查更新。</Text>}
+                <Text role="status">{busy === '正在更新应用' ? '' : updateStatus}</Text>
+                {busy === '正在更新应用' && <ProgressBar label={updateStatus} value={updateProgress ?? undefined} isIndeterminate={updateProgress === null} hasValueLabel />}
+                {updateError && <Banner status="error" title={updateError} role="alert" />}
+                {availableUpdate?.body && <Collapsible trigger="更新说明" defaultIsOpen={false}><Text style={{ whiteSpace: 'pre-wrap' }}>{availableUpdate.body}</Text></Collapsible>}
+                {availableUpdate && <Text>安装后自动重启应用；运行中的共享服务会同步更新，macOS 可能请求管理员授权。</Text>}
+                {availableUpdate && dirty && <Text>请先保存或放弃尚未保存的更改，再安装更新。</Text>}
+                <Stack direction="horizontal" gap={3} wrap="wrap">
+                  <Button label="检查更新" icon={<Icon icon={RefreshCw} />} isDisabled={!updaterAvailable || locked || updateInstalled} isLoading={busy === '正在检查更新'} onClick={() => { void checkForUpdates() }} />
+                  {availableUpdate && <Button label={updateInstalled ? '完成更新并重启' : `下载安装 v${availableUpdate.version}`} variant="primary" isDisabled={!updaterAvailable || locked || dirty || !loaded || Boolean(connectionError)} isLoading={busy === '正在更新应用'} onClick={() => { void installUpdate() }} />}
+                </Stack>
+              </Stack>
               <Text>网络设置通常保持默认即可。</Text>
               <Collapsible trigger="高级设置" isOpen={advancedOpen} onOpenChange={setAdvancedOpen}><Stack gap={6}>
                 <Stack gap={3}>
@@ -351,7 +440,7 @@ export default function App({ themeMode, onThemeChange }: { themeMode: ThemeMode
                   <MetadataListItem label="已处理请求">{snapshot ? number.format(snapshot.service.dnsQueries) : '—'} DNS · {snapshot ? number.format(snapshot.service.proxyRequests) : '—'} HTTP</MetadataListItem>
                 </MetadataList>
                 <form id="settings-form" aria-label="DNS 与网络配置" onSubmit={event => { event.preventDefault(); void save() }}><FormLayout>
-                  <TextInput id="domain" htmlName="domain" label="网址后缀 *" description="默认 dev.home.arpa。" isRequired hasAutoCorrect={false} autoCapitalize="none" hasSpellCheck={false} value={config.domain} onChange={value => change({ domain: value.toLowerCase() })} placeholder="dev.home.arpa" isDisabled={locked} status={settingsError?.field === 'domain' ? { type: 'error', message: settingsError.message } : undefined} />
+                  <TextInput id="domain" htmlName="domain" label="网址后缀 *" description="可自定义，例如 dev.test；默认 dev.home.arpa。" isRequired hasAutoCorrect={false} autoCapitalize="none" hasSpellCheck={false} value={config.domain} onChange={value => change({ domain: value.toLowerCase() })} placeholder="dev.home.arpa" isDisabled={locked} status={settingsError?.field === 'domain' ? { type: 'error', message: settingsError.message } : undefined} />
                   <Switch id="proxy-enabled" label="项目转发" description="添加项目时自动开启；关闭后项目网址无法访问。" value={config.proxyEnabled} onChange={value => change({ proxyEnabled: value })} isDisabled={locked} />
                   <TextInput id="upstream" htmlName="upstreamDns" label="普通网站使用的 DNS *" description="用于查询普通网站的地址。" isRequired hasAutoCorrect={false} autoCapitalize="none" inputMode="decimal" hasSpellCheck={false} value={config.upstreamDns} onChange={value => change({ upstreamDns: value })} placeholder="1.1.1.1" isDisabled={locked} status={settingsError?.field === 'upstream' ? { type: 'error', message: settingsError.message } : undefined} />
                   <NumberInput id="ttl" htmlName="ttl" label="地址缓存时间 *" description="DNS 结果的缓存时间，默认 15 秒。" units="秒" isRequired hasClear min={5} max={300} isIntegerOnly value={config.ttl || null} onChange={value => change({ ttl: value ?? 0 })} onEntryErrorChange={error => { ttlEntryError.current = error?.kind ?? null }} isDisabled={locked} status={settingsError?.field === 'ttl' ? { type: 'error', message: settingsError.message } : undefined} />
@@ -363,6 +452,7 @@ export default function App({ themeMode, onThemeChange }: { themeMode: ThemeMode
                 <Heading level={2}>共享服务</Heading>
                 <Text>{snapshot?.installed ? '关闭窗口后服务继续运行。停止服务也会暂停开机自动运行。' : '首次启用项目需要 macOS 管理员授权。'}</Text>
                 <Badge label={snapshot?.installed ? '已安装' : '未安装'} />
+                {serviceActive && appVersion && snapshot?.service.version !== appVersion && !updateInstalled && <Banner status="info" title="共享服务需要更新" description="同步到当前应用版本，项目网址会短暂中断；macOS 可能请求管理员授权。" endContent={<Button label="更新共享服务" isDisabled={locked || dirty || Boolean(connectionError)} onClick={() => { void action('正在更新共享服务', () => api.startService(currentConfig), '共享服务已更新。') }} />} />}
               </Stack>
               <Stack gap={3} align="start">
                 <Heading level={3}>卸载共享服务</Heading>

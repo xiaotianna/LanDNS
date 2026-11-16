@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Main application window; system actions use validated Rust commands.",
   "windows": ["main"],
-  "permissions": ["core:default", "core:window:allow-set-theme"]
+  "permissions": ["core:default", "core:window:allow-set-theme", "updater:default"]
 }
