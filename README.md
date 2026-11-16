@@ -190,6 +190,8 @@ src-tauri/target/universal-apple-darwin/release/bundle/dmg/
 
 项目包含 [发布工作流](.github/workflows/release.yml)。配置更新签名后，推送版本 tag 就会自动构建 macOS Universal 安装包，并创建已发布的 GitHub Release，上传安装包、签名更新包和 `latest.json` 更新清单。
 
+工作流使用 macOS Intel 构建机生成同时支持 Intel 和 Apple Silicon 的 Universal 安装包。若既有标签发布失败，可在 GitHub Actions 的「Release macOS → Run workflow」选择 `main`，填写原版本标签（例如 `v1.1.1`）重新发布；构建源码始终来自该标签。
+
 ### 1. 配置更新签名
 
 在 GitHub 仓库的 **Settings → Secrets and variables → Actions → Repository secrets** 中添加：

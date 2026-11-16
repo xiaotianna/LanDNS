@@ -4,21 +4,28 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing version tag to publish (for example v1.1.1)
+        required: true
+        type: string
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.release_tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
   macos:
     name: macOS Universal
-    runs-on: macos-15
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: refs/tags/${{ inputs.release_tag || github.ref_name }}
           persist-credentials: false
 
       - name: Check updater signing key
@@ -53,8 +60,8 @@ jobs:
         with:
           tauriScript: npm run tauri
           args: --target universal-apple-darwin --bundles app,dmg -- --locked
-          tagName: ${{ github.ref_name }}
-          releaseName: LanDNS ${{ github.ref_name }}
+          tagName: ${{ inputs.release_tag || github.ref_name }}
+          releaseName: LanDNS ${{ inputs.release_tag || github.ref_name }}
           releaseBody: |
             macOS 14 或更新版本，适用于 Apple Silicon 和 Intel Mac。
             下载 .dmg，打开后将 LanDNS 拖入「应用程序」。
