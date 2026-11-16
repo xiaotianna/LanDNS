@@ -3,6 +3,7 @@
 mod engine;
 mod model;
 mod platform;
+mod proxy_bypass;
 
 use hickory_proto::{
     op::{Message, MessageType, Query},
@@ -190,6 +191,15 @@ fn updater_available() -> bool {
 }
 
 fn main() {
+    if let Some(command @ ("--sync-proxy-bypass" | "--clear-proxy-bypass")) =
+        std::env::args().nth(1).as_deref()
+    {
+        if let Err(error) = proxy_bypass::sync(command == "--clear-proxy-bypass") {
+            eprintln!("LanDNS: {error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     if std::env::args().nth(1).as_deref() == Some("--service") {
         if let Err(error) = engine::run() {
             eprintln!("LanDNS: {error}");

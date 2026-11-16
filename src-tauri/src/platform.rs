@@ -2,6 +2,7 @@ use crate::model::{
     now, Config, LogEntry, NetworkInfo, ServiceStatus, Snapshot, LOG_PATH, PLIST_PATH,
     SERVICE_CONFIG, SERVICE_DIR, SERVICE_LABEL, STATUS_PATH,
 };
+use crate::proxy_bypass::STATE_FILE as PROXY_BYPASS_STATE;
 use if_addrs::IfAddr;
 use std::{
     fs,
@@ -264,6 +265,7 @@ service_dir={service_dir}
 plist={plist}
 label={label}
 marker={marker}
+proxy_bypass_state={proxy_bypass_state}
 fail() {{ echo "$1" >&2; exit 1; }}
 for path in '/Library/Application Support' /Library/LaunchDaemons "$service_dir" "$plist" /etc/resolver; do
   [ ! -L "$path" ] || fail "拒绝操作符号链接：$path"
@@ -292,11 +294,17 @@ stop_loaded() {{
     done
   fi
 }}
+clear_proxy_bypass() {{
+  if [ -f "$service_dir/$proxy_bypass_state" ]; then
+    "$service_dir/dns-x-service" --clear-proxy-bypass
+  fi
+}}
 "#,
         service_dir = shell_quote(SERVICE_DIR),
         plist = shell_quote(PLIST_PATH),
         label = shell_quote(SERVICE_LABEL),
-        marker = shell_quote(RESOLVER_MARKER)
+        marker = shell_quote(RESOLVER_MARKER),
+        proxy_bypass_state = shell_quote(PROXY_BYPASS_STATE)
     )
 }
 
@@ -404,6 +412,9 @@ trap rollback EXIT
 /bin/mkdir "$work/new" "$work/resolvers"
 /usr/bin/install -o root -g wheel -m 755 "$source_executable" "$work/new/dns-x-service"
 /bin/cp "$source_config" "$work/new/config.json"
+if [ -f "$service_dir/$proxy_bypass_state" ]; then
+  /bin/cp "$service_dir/$proxy_bypass_state" "$work/new/$proxy_bypass_state"
+fi
 /bin/cp "$source_plist" "$work/new.plist"
 /usr/bin/plutil -lint -s "$work/new.plist"
 /bin/chmod -RN "$work/new"
@@ -448,6 +459,7 @@ for old in /etc/resolver/*; do
   done
   if [ "$keep" = 0 ] && [ "$(/usr/bin/head -n 1 "$old")" = "$marker" ]; then /bin/rm -f "$old"; fi
 done
+"$service_dir/dns-x-service" --sync-proxy-bypass
 committed=1
 "#,
         preamble = preamble(),
@@ -461,9 +473,19 @@ committed=1
 }
 
 pub fn stop_service() -> Result<(), String> {
-    administrator(&format!("{}\nstop_loaded\n/bin/launchctl disable \"system/$label\"\nremove_resolvers\n/bin/rm -f \"$service_dir/status.json\"\n", preamble()))
+    administrator(&format!("{}\nclear_proxy_bypass\nstop_loaded\n/bin/launchctl disable \"system/$label\"\nremove_resolvers\n/bin/rm -f \"$service_dir/status.json\"\n", preamble()))
 }
 
 pub fn uninstall_service() -> Result<(), String> {
-    administrator(&format!("{}\nstop_loaded\nremove_resolvers\n/bin/rm -f \"$plist\"\n/bin/rm -rf \"$service_dir\"\n/bin/launchctl enable \"system/$label\"\n", preamble()))
+    administrator(&format!(r#"{}
+clear_proxy_bypass
+if [ -f "$service_dir/$proxy_bypass_state" ] && [ "$(/usr/bin/plutil -convert json -o - "$service_dir/$proxy_bypass_state")" != '{{}}' ]; then
+  fail "其他网络位置仍有 LanDNS 的代理绕过规则，记录已保留。请切换到相应网络位置并停止服务后，再卸载。"
+fi
+stop_loaded
+remove_resolvers
+/bin/rm -f "$plist"
+/bin/rm -rf "$service_dir"
+/bin/launchctl enable "system/$label"
+"#, preamble()))
 }

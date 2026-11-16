@@ -213,7 +213,7 @@ export default function App({ themeMode, onThemeChange }: { themeMode: ThemeMode
     if (!validateSettings()) return
     return action('正在启动服务', async () => { await api.startService(config); saved() }, '共享服务已启动。项目需要继续在这台 Mac 上运行。')
   }
-  const stop = () => action('正在停止服务', () => api.stopService(), '服务已停止，本机 DNS 配置已移除。')
+  const stop = () => action('正在停止服务', () => api.stopService(), '服务已停止，本机 DNS 配置及 LanDNS 新增的代理绕过规则已移除。')
   const copy = async (value: string) => {
     try { await navigator.clipboard.writeText(value); toast({ body: <span data-toast-status="success">已复制 {value}</span> }) }
     catch { toast({ body: '无法访问剪贴板，请选择并复制地址。', type: 'error' }) }
@@ -395,7 +395,7 @@ export default function App({ themeMode, onThemeChange }: { themeMode: ThemeMode
               </Stack>
               <Collapsible trigger="还是打不开？" defaultIsOpen={false}><Stack gap={3}>
                 <Text>先确认 Mac 上的 localhost 网址可以打开，再在概览中点击「打开网址」。</Text>
-                <Text>浏览器显示 502 时，在代理软件绕过列表中加入 {project?.hostname || `${currentConfig.domain} 和 *.${currentConfig.domain}`}。</Text>
+                <Text>LanDNS 会自动同步本机系统代理绕过列表。代理软件重写设置后，可保存并应用配置或重新启动服务，再次同步。</Text>
                 <Text>Mac 的 IP 变化后，域名会自动更新；其他设备填写的 DNS 地址也要同步更新。</Text>
                 <Text>允许 macOS 防火墙中的 LanDNS 入站连接。访客 Wi-Fi、设备隔离、VPN 或浏览器安全 DNS 可能影响接入。Mac 睡眠、关机或断网时，以它作为唯一 DNS 的设备也可能无法打开普通网站。</Text>
                 <Text>项目提示域名不被允许时，在项目的主机名白名单中加入该域名，例如 Vite 的 server.allowedHosts。</Text>
@@ -489,7 +489,7 @@ export default function App({ themeMode, onThemeChange }: { themeMode: ThemeMode
           </Stack>
         </Stack></LayoutFooter>} />}
     </Dialog>
-    <AlertDialog isOpen={Boolean(confirm)} onOpenChange={value => { if (!value && !locked) setConfirm(null) }} title={confirm?.kind === 'uninstall' ? '卸载 LanDNS 后台服务？' : '移除这个本地项目？'} description={confirm?.kind === 'uninstall' ? '这会停止 DNS 和 HTTP 代理，移除 Mac 本机的域名解析配置。其他设备若使用这台 Mac 作为 DNS，需要恢复其网络设置。应用内的设置会保留。' : `“${confirm?.kind === 'route' ? confirm.route.name || confirm.route.subdomain : ''}”将从配置中移除，保存并应用后生效。`} cancelLabel="取消" actionLabel={confirm?.kind === 'uninstall' ? '卸载服务' : '移除项目'} isActionLoading={locked} onAction={() => {
+    <AlertDialog isOpen={Boolean(confirm)} onOpenChange={value => { if (!value && !locked) setConfirm(null) }} title={confirm?.kind === 'uninstall' ? '卸载 LanDNS 后台服务？' : '移除这个本地项目？'} description={confirm?.kind === 'uninstall' ? '这会停止 DNS 和 HTTP 代理，移除 Mac 本机的域名解析配置及 LanDNS 新增的代理绕过规则。其他设备若使用这台 Mac 作为 DNS，需要恢复其网络设置。应用内的设置会保留。' : `“${confirm?.kind === 'route' ? confirm.route.name || confirm.route.subdomain : ''}”将从配置中移除，保存并应用后生效。`} cancelLabel="取消" actionLabel={confirm?.kind === 'uninstall' ? '卸载服务' : '移除项目'} isActionLoading={locked} onAction={() => {
       if (locked) return
       if (confirm?.kind === 'route') { change({ routes: config.routes.filter(route => route.id !== confirm.route.id) }); setConfirm(null) }
       else if (confirm?.kind === 'uninstall') { void action('正在卸载服务', async () => { await api.uninstallService(); setConfirm(null) }, '后台服务已卸载。请同步恢复其他设备的 DNS 设置。') }
