@@ -179,9 +179,9 @@ src-tauri/target/universal-apple-darwin/release/bundle/dmg/
 
 项目包含 [发布工作流](.github/workflows/release.yml)。将项目放入 GitHub 仓库并启用 Actions 后，推送版本 tag 就会自动构建 macOS Universal 安装包，并创建已发布的 GitHub Release，上传构建产物。
 
-### 1. 同步版本号
+### 1. 确认安装包版本
 
-发布前，将以下位置更新为同一个版本，例如 `0.1.0`：
+安装包版本取自 `src-tauri/tauri.conf.json`。需要升级应用版本时，将以下位置同步更新，例如 `0.1.0`：
 
 - `package.json` 的 `version`。
 - `package-lock.json` 顶层及 `packages[""]` 中的 `version`。
@@ -191,11 +191,11 @@ src-tauri/target/universal-apple-darwin/release/bundle/dmg/
 
 内部 Rust 包名仍为 `dns-x`；更新版本时，只修改该包的条目，不要修改依赖包的版本。
 
-工作流会校验 tag 与项目版本是否一致，不一致时停止构建。当前只接受 `v主版本.次版本.修订版本` 形式的稳定版 tag，例如 `v0.1.0`，不接受 `v0.1.0-beta.1`。
+以 `v` 开头的 tag 会触发构建，Release 名称使用该 tag。
 
 ### 2. 推送 tag
 
-确认版本修改和发布工作流已提交，且远程仓库已配置为 `origin`，再手动执行：
+确认要发布的代码和工作流已提交，且远程仓库已配置为 `origin`，再手动执行：
 
 ```sh
 git tag -a v0.1.0 -m "LanDNS v0.1.0"
