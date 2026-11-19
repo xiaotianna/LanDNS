@@ -6,6 +6,7 @@ mod model;
 mod ngrok;
 mod platform;
 mod proxy_bypass;
+mod tray;
 
 use hickory_proto::{
     op::{Message, MessageType, Query},
@@ -172,10 +173,9 @@ fn query_local_dns(hostname: &str) -> Result<String, String> {
         .ok_or_else(|| format!("未收到 A 记录（{}）", response.response_code()))
 }
 
-#[tauri::command]
-fn open_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
-    let parsed = url::Url::parse(&url).map_err(|_| "地址格式无效。")?;
-    let config = platform::load_config(&app)?;
+pub(crate) fn open_configured_http(app: &tauri::AppHandle, url: &str) -> Result<(), String> {
+    let parsed = url::Url::parse(url).map_err(|_| "地址格式无效。")?;
+    let config = platform::load_config(app)?;
     let host = parsed.host_str().unwrap_or_default();
     let local = config.resolves_hostname(host);
     let docs = ["support.apple.com", "v2.tauri.app"].contains(&host);
@@ -198,6 +198,11 @@ fn open_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn open_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    open_configured_http(&app, &url)
+}
+
+#[tauri::command]
 async fn restart_app(app: tauri::AppHandle) {
     app.restart();
 }
@@ -217,7 +222,11 @@ fn updater_available() -> bool {
         && directory
             .parent()
             .and_then(std::path::Path::parent)
-            .is_some_and(|bundle| bundle.extension().is_some_and(|extension| extension == "app"))
+            .is_some_and(|bundle| {
+                bundle
+                    .extension()
+                    .is_some_and(|extension| extension == "app")
+            })
 }
 
 fn main() {
@@ -240,9 +249,19 @@ fn main() {
     tauri::Builder::default()
         .setup(|app| {
             if updater_available() {
-                app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
+                app.handle()
+                    .plugin(tauri_plugin_updater::Builder::new().build())?;
+            }
+            if let Err(error) = tray::install(app.handle()) {
+                eprintln!("LanDNS: 菜单栏图标不可用：{error}");
             }
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                tray::conceal(window);
+            }
         })
         .manage(Operations::default())
         .invoke_handler(tauri::generate_handler![
@@ -262,6 +281,19 @@ fn main() {
             ngrok::ngrok_set_authtoken,
             ngrok::open_ngrok_url
         ])
-        .run(tauri::generate_context!())
-        .expect("无法启动 LanDNS 桌面应用");
+        .build(tauri::generate_context!())
+        .expect("无法启动 LanDNS 桌面应用")
+        .run(|app, event| match event {
+            tauri::RunEvent::ExitRequested { api, code, .. }
+                if code != Some(tauri::RESTART_EXIT_CODE) =>
+            {
+                api.prevent_exit();
+                tray::conceal_main(app);
+            }
+            tauri::RunEvent::Reopen {
+                has_visible_windows: false,
+                ..
+            } => tray::reveal(app),
+            _ => {}
+        });
 }

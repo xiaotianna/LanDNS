@@ -11,6 +11,7 @@ import {
   TableBody, TableCell, TableHeader, TableHeaderCell, TableRow, Text, TextInput, useToast,
 } from '@astryxdesign/core'
 import type { ThemeMode } from '@astryxdesign/core/theme'
+import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { getVersion } from '@tauri-apps/api/app'
 import { check, type Update } from '@tauri-apps/plugin-updater'
@@ -106,6 +107,15 @@ export default function App({ themeMode, onThemeChange }: { themeMode: ThemeMode
     const timer = window.setInterval(() => { void refresh() }, 4000)
     return () => window.clearInterval(timer)
   }, [refresh])
+
+  useEffect(() => {
+    if (!isDesktop) return
+    const listener = listen<string>('tray-open', event => {
+      if (event.payload === 'proxy') setPage('proxy')
+      else if (event.payload === 'ngrok' || event.payload === 'ngrok-machine') setPage('ngrok')
+    })
+    return () => { void listener.then(unlisten => unlisten()) }
+  }, [])
 
   useEffect(() => {
     if (isDesktop) void Promise.all([getVersion(), api.updaterAvailable()]).then(([version, available]) => {

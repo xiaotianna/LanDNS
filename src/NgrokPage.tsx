@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { listen } from '@tauri-apps/api/event'
 import { Copy, ExternalLink, Globe } from 'lucide-react'
 import {
   AlertDialog, Badge, Banner, Button, ButtonGroup, Collapsible, EmptyState, FormLayout,
@@ -44,6 +45,15 @@ export function NgrokPage({
   const [tab, setTab] = useState('tunnel')
   const formRef = useRef(form)
   formRef.current = form
+
+  useEffect(() => {
+    if (!desktop) return
+    const listener = listen<string>('tray-open', event => {
+      if (event.payload === 'ngrok') setTab('tunnel')
+      else if (event.payload === 'ngrok-machine') setTab('machine')
+    })
+    return () => { void listener.then(unlisten => unlisten()) }
+  }, [desktop])
 
   useEffect(() => {
     if (!desktop) return
@@ -173,7 +183,7 @@ export function NgrokPage({
           </ButtonGroup>
         </Stack>
         {tunnel.addr && <MetadataList><MetadataListItem label="转发到">{tunnel.addr}</MetadataListItem></MetadataList>}
-        <Text>关闭窗口后隧道会继续运行，回到此页可以停止。</Text>
+        <Text>关闭窗口后 LanDNS 留在菜单栏，隧道继续运行。回到此页可以停止。</Text>
       </Stack> : running ? <EmptyState icon={<Icon icon={Globe} />} title="正在连接 ngrok" description="公网地址出现后会显示在这里。" /> : null}
     </Stack>}
 

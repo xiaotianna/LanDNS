@@ -258,9 +258,9 @@ fn local_account(binary: &Path) -> (bool, Option<String>) {
         })
     });
     let path = reported.or_else(default_ngrok_config);
-    let configured = path.as_deref().is_some_and(|path| {
-        fs::read_to_string(path).is_ok_and(|text| config_has_authtoken(&text))
-    });
+    let configured = path
+        .as_deref()
+        .is_some_and(|path| fs::read_to_string(path).is_ok_and(|text| config_has_authtoken(&text)));
     let path = path.filter(|path| Path::new(path).is_file());
     (configured, path)
 }
@@ -281,7 +281,9 @@ fn write_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
     let mut file = tempfile::NamedTempFile::new_in(directory).map_err(|error| error.to_string())?;
     file.write_all(&serde_json::to_vec_pretty(value).map_err(|error| error.to_string())?)
         .map_err(|error| error.to_string())?;
-    file.as_file().sync_all().map_err(|error| error.to_string())?;
+    file.as_file()
+        .sync_all()
+        .map_err(|error| error.to_string())?;
     file.persist(path)
         .map_err(|error| format!("无法保存 ngrok 配置：{error}"))?;
     Ok(())
@@ -338,9 +340,7 @@ fn redact_line(line: &str) -> String {
         }
         if lower.contains("authtoken") || lower.contains("api-key") {
             if let Some((key, value)) = word.split_once('=') {
-                if !value.is_empty()
-                    && value != "\"\""
-                    && !value.eq_ignore_ascii_case("authtoken")
+                if !value.is_empty() && value != "\"\"" && !value.eq_ignore_ascii_case("authtoken")
                 {
                     words.push(format!("{key}=<已隐藏>"));
                     continue;
@@ -362,10 +362,7 @@ fn log_text(line: &str) -> String {
             return quoted[..end].to_string();
         }
     }
-    rest.split_whitespace()
-        .next()
-        .unwrap_or(rest)
-        .to_string()
+    rest.split_whitespace().next().unwrap_or(rest).to_string()
 }
 
 fn recent_error(path: &Path, logs: &[String]) -> Option<String> {
@@ -421,9 +418,7 @@ fn http_get(path: &str) -> Result<String, String> {
         }
     }
     let raw = String::from_utf8_lossy(&bytes);
-    let (head, body) = raw
-        .split_once("\r\n\r\n")
-        .ok_or("ngrok 本地接口响应无效")?;
+    let (head, body) = raw.split_once("\r\n\r\n").ok_or("ngrok 本地接口响应无效")?;
     let status = head.lines().next().unwrap_or("");
     if !status.contains(" 200 ") {
         return Err("ngrok 本地接口没有返回隧道信息".into());
@@ -444,11 +439,9 @@ fn decode_chunked(body: &str) -> String {
         let Some((size_line, after)) = rest.split_once("\r\n") else {
             break;
         };
-        let size = usize::from_str_radix(
-            size_line.trim().split(';').next().unwrap_or("").trim(),
-            16,
-        )
-        .unwrap_or(0);
+        let size =
+            usize::from_str_radix(size_line.trim().split(';').next().unwrap_or("").trim(), 16)
+                .unwrap_or(0);
         if size == 0 || after.len() < size {
             break;
         }
@@ -468,7 +461,9 @@ fn tunnels_from_api() -> Vec<NgrokTunnel> {
     parsed
         .tunnels
         .into_iter()
-        .filter(|tunnel| tunnel.public_url.starts_with("https://") || tunnel.public_url.starts_with("http://"))
+        .filter(|tunnel| {
+            tunnel.public_url.starts_with("https://") || tunnel.public_url.starts_with("http://")
+        })
         .map(|tunnel| NgrokTunnel {
             addr: tunnel
                 .config
@@ -637,17 +632,15 @@ fn normalize_public_url(value: &str) -> Result<String, String> {
             !host.is_empty()
                 && host.len() <= 253
                 && host.contains('.')
-                && host
-                    .split('.')
-                    .all(|label| {
-                        !label.is_empty()
-                            && label.len() <= 63
-                            && !label.starts_with('-')
-                            && !label.ends_with('-')
-                            && label
-                                .bytes()
-                                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-                    })
+                && host.split('.').all(|label| {
+                    !label.is_empty()
+                        && label.len() <= 63
+                        && !label.starts_with('-')
+                        && !label.ends_with('-')
+                        && label
+                            .bytes()
+                            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+                })
         })
         .ok_or("固定公网网址的域名无效。")?;
     Ok(format!("https://{}", host.to_ascii_lowercase()))
@@ -661,26 +654,26 @@ fn normalize_host_header(value: &str) -> Result<String, String> {
     if value == "rewrite" {
         return Ok(value.to_string());
     }
-    let (host, port) = value.rsplit_once(':').map_or((value, None), |(host, port)| {
-        if port.chars().all(|char| char.is_ascii_digit()) {
-            (host, Some(port))
-        } else {
-            (value, None)
-        }
-    });
+    let (host, port) = value
+        .rsplit_once(':')
+        .map_or((value, None), |(host, port)| {
+            if port.chars().all(|char| char.is_ascii_digit()) {
+                (host, Some(port))
+            } else {
+                (value, None)
+            }
+        });
     let valid_host = !host.is_empty()
         && host.len() <= 253
-        && host
-            .split('.')
-            .all(|label| {
-                !label.is_empty()
-                    && label.len() <= 63
-                    && !label.starts_with('-')
-                    && !label.ends_with('-')
-                    && label
-                        .bytes()
-                        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-            });
+        && host.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        });
     let valid_port = port
         .map(|port| port.parse::<u16>().ok().is_some_and(|port| port != 0))
         .unwrap_or(true);
@@ -720,7 +713,9 @@ pub fn start(app: &tauri::AppHandle, settings: NgrokSettings) -> Result<NgrokSta
     let settings = draft(settings)?;
     let binary = find_binary().ok_or("未找到 ngrok。可先安装：brew install --cask ngrok")?;
     if !local_account(&binary).0 {
-        return Err("本机 ngrok 配置里没有 authtoken。请先打开申请页面，按页面说明写入本机配置。".into());
+        return Err(
+            "本机 ngrok 配置里没有 authtoken。请先打开申请页面，按页面说明写入本机配置。".into(),
+        );
     }
     let (target, public_url, host_header, policy) = prepare(&settings)?;
     if running_pid(app).is_some() {
@@ -880,15 +875,16 @@ pub fn open(app: &tauri::AppHandle, url: &str) -> Result<(), String> {
         && parsed.port_or_known_default() == Some(INSPECT_PORT)
         && parsed.username().is_empty()
         && parsed.password().is_none();
-    let tunnel = parsed.scheme() == "https" && current.tunnels.iter().any(|tunnel| {
-        tunnel.public_url.trim_end_matches('/') == parsed.as_str().trim_end_matches('/')
-            || tunnel.public_url.trim_end_matches('/')
-                == format!(
-                    "{}://{}",
-                    parsed.scheme(),
-                    parsed.host_str().unwrap_or_default()
-                )
-    });
+    let tunnel = parsed.scheme() == "https"
+        && current.tunnels.iter().any(|tunnel| {
+            tunnel.public_url.trim_end_matches('/') == parsed.as_str().trim_end_matches('/')
+                || tunnel.public_url.trim_end_matches('/')
+                    == format!(
+                        "{}://{}",
+                        parsed.scheme(),
+                        parsed.host_str().unwrap_or_default()
+                    )
+        });
     let authtoken_page = parsed.as_str().trim_end_matches('/') == AUTHTOKEN_PAGE
         && parsed.username().is_empty()
         && parsed.password().is_none()
@@ -916,10 +912,7 @@ pub async fn ngrok_status(app: tauri::AppHandle) -> Result<NgrokStatus, String> 
 }
 
 #[tauri::command]
-pub async fn ngrok_save(
-    app: tauri::AppHandle,
-    settings: NgrokSettings,
-) -> Result<(), String> {
+pub async fn ngrok_save(app: tauri::AppHandle, settings: NgrokSettings) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || save(&app, settings))
         .await
         .map_err(|error| error.to_string())?
@@ -943,7 +936,10 @@ pub async fn ngrok_stop(app: tauri::AppHandle) -> Result<NgrokStatus, String> {
 }
 
 #[tauri::command]
-pub async fn ngrok_set_authtoken(app: tauri::AppHandle, token: String) -> Result<NgrokStatus, String> {
+pub async fn ngrok_set_authtoken(
+    app: tauri::AppHandle,
+    token: String,
+) -> Result<NgrokStatus, String> {
     tauri::async_runtime::spawn_blocking(move || {
         set_authtoken(&token)?;
         status(&app)
@@ -961,15 +957,15 @@ pub async fn open_ngrok_url(app: tauri::AppHandle, url: String) -> Result<(), St
 
 #[cfg(test)]
 mod tests {
-    use super::{config_has_authtoken, find_binary, normalize_host_header, normalize_public_url, normalize_target, redact_line, version_of};
+    use super::{
+        config_has_authtoken, find_binary, normalize_host_header, normalize_public_url,
+        normalize_target, redact_line, version_of,
+    };
     use std::path::Path;
 
     #[test]
     fn accepts_local_targets() {
-        assert_eq!(
-            normalize_target("8080").unwrap(),
-            "http://127.0.0.1:8080"
-        );
+        assert_eq!(normalize_target("8080").unwrap(), "http://127.0.0.1:8080");
         assert_eq!(
             normalize_target("http://localhost:3002").unwrap(),
             "http://localhost:3002"

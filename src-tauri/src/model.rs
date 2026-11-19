@@ -279,10 +279,8 @@ mod checks {
 
     #[test]
     fn reads_service_status_without_version() {
-        let mut status: ServiceStatus = serde_json::from_str(
-            r#"{"running":true,"dnsQueries":7,"proxyRequests":3}"#,
-        )
-        .unwrap();
+        let mut status: ServiceStatus =
+            serde_json::from_str(r#"{"running":true,"dnsQueries":7,"proxyRequests":3}"#).unwrap();
         assert_eq!(status.version, None);
         assert!(status.running);
         assert_eq!(status.dns_queries, 7);
@@ -363,7 +361,13 @@ mod checks {
     fn rejects_unsafe_configuration() {
         let mut config = Config::default();
         assert!(config.validate().is_ok());
-        for name in ["dev.home.arpa", "dev.test", "example.com", "lan", "123.test"] {
+        for name in [
+            "dev.home.arpa",
+            "dev.test",
+            "example.com",
+            "lan",
+            "123.test",
+        ] {
             config.domain = name.into();
             assert!(config.validate().is_ok(), "{name}");
         }

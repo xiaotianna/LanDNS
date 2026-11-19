@@ -741,7 +741,10 @@ mod checks {
         }
         config.routes[2].hostname = Some("custom.dev.home.arpa".into());
         assert_eq!(route_port("custom.dev.home.arpa", &config), Some(8081));
-        assert_eq!(route_port("child.custom.dev.home.arpa", &config), Some(3000));
+        assert_eq!(
+            route_port("child.custom.dev.home.arpa", &config),
+            Some(3000)
+        );
         config.routes[2].hostname = Some("dev.home.arpa".into());
         assert_eq!(route_port("dev.home.arpa", &config), Some(8081));
         config.routes[2].enabled = false;

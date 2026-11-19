@@ -479,7 +479,8 @@ pub fn stop_service() -> Result<(), String> {
 }
 
 pub fn uninstall_service() -> Result<(), String> {
-    administrator(&format!(r#"{}
+    administrator(&format!(
+        r#"{}
 clear_proxy_bypass
 if [ -f "$service_dir/$proxy_bypass_state" ] && [ "$(/usr/bin/plutil -convert json -o - "$service_dir/$proxy_bypass_state")" != '{{}}' ]; then
   fail "其他网络位置仍有 LanDNS 的代理绕过规则，记录已保留。请切换到相应网络位置并停止服务后，再卸载。"
@@ -489,5 +490,7 @@ remove_resolvers
 /bin/rm -f "$plist"
 /bin/rm -rf "$service_dir"
 /bin/launchctl enable "system/$label"
-"#, preamble()))
+"#,
+        preamble()
+    ))
 }
