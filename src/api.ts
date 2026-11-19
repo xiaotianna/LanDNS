@@ -1,5 +1,5 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
-import type { Config, DiagnosticResult, Snapshot } from './types';
+import type { Config, DiagnosticResult, NgrokSettings, NgrokStatus, Snapshot } from './types';
 
 export const isDesktop = isTauri();
 
@@ -18,4 +18,10 @@ export const api = {
   openUrl: (url: string) => call<void>('open_url', { url }),
   restartApp: () => call<void>('restart_app'),
   updaterAvailable: () => call<boolean>('updater_available'),
+  ngrokStatus: () => call<NgrokStatus>('ngrok_status'),
+  ngrokSave: (settings: NgrokSettings) => call<void>('ngrok_save', { settings }),
+  ngrokStart: (settings: NgrokSettings) => call<NgrokStatus>('ngrok_start', { settings }),
+  ngrokStop: () => call<NgrokStatus>('ngrok_stop'),
+  ngrokSetAuthtoken: (token: string) => call<void>('ngrok_set_authtoken', { token }),
+  openNgrokUrl: (url: string) => call<void>('open_ngrok_url', { url }),
 };

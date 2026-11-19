@@ -3,6 +3,7 @@
 mod engine;
 mod mdns;
 mod model;
+mod ngrok;
 mod platform;
 mod proxy_bypass;
 
@@ -253,7 +254,13 @@ fn main() {
             diagnose,
             open_url,
             restart_app,
-            updater_available
+            updater_available,
+            ngrok::ngrok_status,
+            ngrok::ngrok_save,
+            ngrok::ngrok_start,
+            ngrok::ngrok_stop,
+            ngrok::ngrok_set_authtoken,
+            ngrok::open_ngrok_url
         ])
         .run(tauri::generate_context!())
         .expect("无法启动 LanDNS 桌面应用");

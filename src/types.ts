@@ -47,6 +47,38 @@ export interface DiagnosticResult {
   ok: boolean;
   message: string;
 }
+export interface NgrokSettings {
+  target: string;
+  publicUrl: string;
+  hostHeader: string;
+  trafficPolicyFile: string;
+}
+
+export interface NgrokTunnel {
+  publicUrl: string;
+  proto: string;
+  addr: string;
+}
+
+export interface NgrokStatus {
+  installed: boolean;
+  binary: string | null;
+  version: string | null;
+  authtokenConfigured: boolean;
+  running: boolean;
+  owned: boolean;
+  pid: number | null;
+  tunnels: NgrokTunnel[];
+  inspectUrl: string | null;
+  logs: string[];
+  settings: NgrokSettings;
+  message: string | null;
+}
+
+export const DEFAULT_NGROK_SETTINGS: NgrokSettings = {
+  target: '', publicUrl: '', hostHeader: '', trafficPolicyFile: '',
+};
+
 export const DEFAULT_CONFIG: Config = {
   domain: 'dev.home.arpa', upstreamDns: '1.1.1.1', interfaceName: '',
   proxyEnabled: false, ttl: 15, routes: [],

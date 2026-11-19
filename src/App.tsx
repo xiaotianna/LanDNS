@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import {
-  ArrowUpRight, Copy, ExternalLink, Laptop, LayoutDashboard, Plus,
+  ArrowUpRight, Copy, ExternalLink, Globe, Laptop, LayoutDashboard, Plus,
   RefreshCw, Search, Settings2, TerminalSquare, Trash2,
 } from 'lucide-react'
 import {
@@ -17,11 +17,13 @@ import { check, type Update } from '@tauri-apps/plugin-updater'
 import { api, isDesktop } from './api'
 import { DEFAULT_CONFIG, type Config, type DiagnosticResult, type ProxyRoute, type Snapshot } from './types'
 import { getProjectUrl, parseLocalAddress, parseProjectAddress } from './lib/projects'
+import { NgrokPage } from './NgrokPage'
 
-type Page = 'overview' | 'proxy' | 'devices' | 'logs' | 'settings'
+type Page = 'overview' | 'proxy' | 'ngrok' | 'devices' | 'logs' | 'settings'
 const pages = [
   { id: 'overview' as const, label: '概览', icon: LayoutDashboard },
   { id: 'proxy' as const, label: '本地项目', icon: ArrowUpRight },
+  { id: 'ngrok' as const, label: '公网访问', icon: Globe },
   { id: 'devices' as const, label: '连接其他设备', icon: Laptop },
   { id: 'logs' as const, label: '运行日志', icon: TerminalSquare },
 ]
@@ -368,6 +370,8 @@ export default function App({ themeMode, onThemeChange }: { themeMode: ThemeMode
                 </Table>
               </Stack>}
             </Stack>}
+
+            {page === 'ngrok' && <NgrokPage desktop={isDesktop} disabled={!isDesktop || !loaded || locked || Boolean(connectionError)} busy={busy} routes={config.routes} run={action} />}
 
             {page === 'devices' && <Stack gap={6}>
               <Text>其他设备连接同一网络后，完成一次 DNS 设置。</Text>
