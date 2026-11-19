@@ -13,6 +13,7 @@ use tauri::Manager;
 use url::Url;
 
 const INSPECT_PORT: u16 = 4040;
+const AUTHTOKEN_PAGE: &str = "https://dashboard.ngrok.com/get-started/your-authtoken";
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -38,6 +39,7 @@ pub struct NgrokStatus {
     pub binary: Option<String>,
     pub version: Option<String>,
     pub authtoken_configured: bool,
+    pub config_path: Option<String>,
     pub running: bool,
     pub owned: bool,
     pub pid: Option<u32>,
@@ -216,12 +218,51 @@ fn version_of(binary: &Path) -> Option<String> {
     text.split_whitespace().last().map(str::to_string)
 }
 
-fn authtoken_configured(binary: &Path) -> bool {
-    Command::new(binary)
-        .args(["config", "check"])
-        .output()
-        .map(|output| output.status.success())
-        .unwrap_or(false)
+fn config_has_authtoken(text: &str) -> bool {
+    text.lines().any(|line| {
+        let trimmed = line.split('#').next().unwrap_or("").trim();
+        let Some(value) = trimmed.strip_prefix("authtoken:") else {
+            return false;
+        };
+        let value = value.trim().trim_matches(['"', '\'']);
+        !value.is_empty() && value != "null" && value != "~"
+    })
+}
+
+fn default_ngrok_config() -> Option<String> {
+    let home = PathBuf::from(std::env::var_os("HOME")?);
+    [
+        "Library/Application Support/ngrok/ngrok.yml",
+        ".config/ngrok/ngrok.yml",
+        ".ngrok2/ngrok.yml",
+    ]
+    .into_iter()
+    .map(|relative| home.join(relative))
+    .find(|path| path.is_file())
+    .map(|path| path.display().to_string())
+}
+
+fn local_account(binary: &Path) -> (bool, Option<String>) {
+    let output = Command::new(binary).args(["config", "check"]).output();
+    let reported = output.ok().and_then(|output| {
+        let text = format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        text.lines().find_map(|line| {
+            let marker = " at ";
+            line.rfind(marker)
+                .map(|index| line[index + marker.len()..].trim().to_string())
+                .filter(|path| !path.is_empty())
+        })
+    });
+    let path = reported.or_else(default_ngrok_config);
+    let configured = path.as_deref().is_some_and(|path| {
+        fs::read_to_string(path).is_ok_and(|text| config_has_authtoken(&text))
+    });
+    let path = path.filter(|path| Path::new(path).is_file());
+    (configured, path)
 }
 
 fn load_settings(app: &tauri::AppHandle) -> NgrokSettings {
@@ -465,9 +506,10 @@ fn tunnels_from_logs(logs: &[String]) -> Vec<NgrokTunnel> {
 fn collect(app: &tauri::AppHandle) -> Result<NgrokStatus, String> {
     let binary = find_binary();
     let version = binary.as_ref().and_then(|path| version_of(path));
-    let authtoken_configured = binary
+    let (authtoken_configured, config_path) = binary
         .as_ref()
-        .is_some_and(|path| authtoken_configured(path));
+        .map(|path| local_account(path))
+        .unwrap_or((false, None));
     let owned = owned_pid(app);
     let pid = owned.or_else(|| listener_pids().into_iter().next());
     let running = pid.is_some();
@@ -497,6 +539,7 @@ fn collect(app: &tauri::AppHandle) -> Result<NgrokStatus, String> {
         binary: binary.map(|path| path.display().to_string()),
         version,
         authtoken_configured,
+        config_path,
         running,
         owned: owned.is_some(),
         pid,
@@ -676,8 +719,8 @@ pub fn start(app: &tauri::AppHandle, settings: NgrokSettings) -> Result<NgrokSta
     let _guard = lock();
     let settings = draft(settings)?;
     let binary = find_binary().ok_or("未找到 ngrok。可先安装：brew install --cask ngrok")?;
-    if !authtoken_configured(&binary) {
-        return Err("还没有配置 ngrok 账号。请先在此页保存 authtoken。".into());
+    if !local_account(&binary).0 {
+        return Err("本机 ngrok 配置里没有 authtoken。请先打开申请页面，按页面说明写入本机配置。".into());
     }
     let (target, public_url, host_header, policy) = prepare(&settings)?;
     if running_pid(app).is_some() {
@@ -805,14 +848,14 @@ pub fn set_authtoken(token: &str) -> Result<(), String> {
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
     {
-        return Err("authtoken 格式无效。请从 ngrok 控制台复制完整 token。".into());
+        return Err("authtoken 格式无效。请从申请页面复制完整 token。".into());
     }
     let binary = find_binary().ok_or("未找到 ngrok。可先安装：brew install --cask ngrok")?;
-    let output = Command::new(binary)
+    let output = Command::new(&binary)
         .args(["config", "add-authtoken", token])
         .output()
         .map_err(|error| format!("无法写入 ngrok 配置：{error}"))?;
-    if output.status.success() {
+    if output.status.success() && local_account(&binary).0 {
         return Ok(());
     }
     let mut detail = String::from_utf8_lossy(&output.stderr).to_string();
@@ -821,9 +864,9 @@ pub fn set_authtoken(token: &str) -> Result<(), String> {
     }
     let detail = detail.replace(token, "<已隐藏>");
     Err(if detail.trim().is_empty() {
-        "保存 authtoken 失败。".into()
+        "写入本机 ngrok 配置失败。".into()
     } else {
-        format!("保存 authtoken 失败：{}", detail.trim())
+        format!("写入本机 ngrok 配置失败：{}", detail.trim())
     })
 }
 
@@ -846,8 +889,13 @@ pub fn open(app: &tauri::AppHandle, url: &str) -> Result<(), String> {
                     parsed.host_str().unwrap_or_default()
                 )
     });
-    if !inspect && !tunnel {
-        return Err("只能打开当前隧道的公网地址，或本机的 ngrok 请求检查页。".into());
+    let authtoken_page = parsed.as_str().trim_end_matches('/') == AUTHTOKEN_PAGE
+        && parsed.username().is_empty()
+        && parsed.password().is_none()
+        && parsed.query().is_none()
+        && parsed.fragment().is_none();
+    if !inspect && !tunnel && !authtoken_page {
+        return Err("只能打开当前隧道、本机请求检查页，或 ngrok 的 authtoken 申请页。".into());
     }
     let status = Command::new("/usr/bin/open")
         .arg(parsed.as_str())
@@ -895,10 +943,13 @@ pub async fn ngrok_stop(app: tauri::AppHandle) -> Result<NgrokStatus, String> {
 }
 
 #[tauri::command]
-pub async fn ngrok_set_authtoken(token: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || set_authtoken(&token))
-        .await
-        .map_err(|error| error.to_string())?
+pub async fn ngrok_set_authtoken(app: tauri::AppHandle, token: String) -> Result<NgrokStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        set_authtoken(&token)?;
+        status(&app)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -910,7 +961,7 @@ pub async fn open_ngrok_url(app: tauri::AppHandle, url: String) -> Result<(), St
 
 #[cfg(test)]
 mod tests {
-    use super::{find_binary, normalize_host_header, normalize_public_url, normalize_target, redact_line, version_of};
+    use super::{config_has_authtoken, find_binary, normalize_host_header, normalize_public_url, normalize_target, redact_line, version_of};
     use std::path::Path;
 
     #[test]
@@ -960,6 +1011,13 @@ mod tests {
         let found = find_binary().expect("本机已有 ngrok 时应该能检测到");
         assert!(found.ends_with("ngrok"));
         assert!(version_of(&found).is_some());
+    }
+
+    #[test]
+    fn reads_authtoken_presence_without_keeping_the_value() {
+        assert!(config_has_authtoken("agent:\n  authtoken: present\n"));
+        assert!(!config_has_authtoken("agent:\n  authtoken:\n"));
+        assert!(!config_has_authtoken("# authtoken: hidden\n"));
     }
 
     #[test]

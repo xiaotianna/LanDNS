@@ -65,6 +65,7 @@ export interface NgrokStatus {
   binary: string | null;
   version: string | null;
   authtokenConfigured: boolean;
+  configPath: string | null;
   running: boolean;
   owned: boolean;
   pid: number | null;

@@ -22,6 +22,6 @@ export const api = {
   ngrokSave: (settings: NgrokSettings) => call<void>('ngrok_save', { settings }),
   ngrokStart: (settings: NgrokSettings) => call<NgrokStatus>('ngrok_start', { settings }),
   ngrokStop: () => call<NgrokStatus>('ngrok_stop'),
-  ngrokSetAuthtoken: (token: string) => call<void>('ngrok_set_authtoken', { token }),
+  ngrokSetAuthtoken: (token: string) => call<NgrokStatus>('ngrok_set_authtoken', { token }),
   openNgrokUrl: (url: string) => call<void>('open_ngrok_url', { url }),
 };
